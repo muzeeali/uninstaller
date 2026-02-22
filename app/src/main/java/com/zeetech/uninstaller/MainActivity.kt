@@ -10,7 +10,13 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.StatFs
+import android.app.AppOpsManager
+import android.app.usage.UsageStatsManager
+import android.app.AppOpsManager.MODE_ALLOWED
+import android.app.AppOpsManager.OPSTR_GET_USAGE_STATS
 import android.provider.Settings
+import android.content.Context
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -30,7 +36,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -65,6 +77,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 
 class MainActivity : ComponentActivity() {
     private lateinit var viewModel: AppViewModel
@@ -79,6 +93,11 @@ class MainActivity : ComponentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         viewModel = ViewModelProvider(this)[AppViewModel::class.java]
+        
+        // Automated Surgical Scan on Launch
+        if (viewModel.scanOnLaunch.value && viewModel.hasAllFilesAccess()) {
+            viewModel.startDeepClean()
+        }
         
         enableEdgeToEdge()
         setContent {
@@ -135,10 +154,58 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow<AppUiState>(AppUiState.Loading)
     val uiState: StateFlow<AppUiState> = _uiState
 
+    private val prefs = application.getSharedPreferences("surgical_uninstaller_prefs", Context.MODE_PRIVATE)
+    
+    private val _sortBy = MutableStateFlow(prefs.getString("sort_by", "Name") ?: "Name")
+    val sortBy: StateFlow<String> = _sortBy
+
+    private val _isAscending = MutableStateFlow(prefs.getBoolean("is_ascending", true))
+    val isAscending: StateFlow<Boolean> = _isAscending
+
+    private val _storageThreshold = MutableStateFlow(prefs.getFloat("storage_threshold", 0.9f))
+    val storageThreshold: StateFlow<Float> = _storageThreshold
+
+    private val _scanOnLaunch = MutableStateFlow(prefs.getBoolean("scan_on_launch", false))
+    val scanOnLaunch: StateFlow<Boolean> = _scanOnLaunch
+
     private var discoveredJunk = listOf<File>()
 
     init {
         loadApps()
+    }
+
+    fun updateSortPreference(newSortBy: String, newIsAscending: Boolean) {
+        _sortBy.value = newSortBy
+        _isAscending.value = newIsAscending
+        prefs.edit().putString("sort_by", newSortBy).putBoolean("is_ascending", newIsAscending).apply()
+    }
+
+    fun updateStorageThreshold(threshold: Float) {
+        _storageThreshold.value = threshold
+        prefs.edit().putFloat("storage_threshold", threshold).apply()
+    }
+
+    fun toggleScanOnLaunch(enabled: Boolean) {
+        _scanOnLaunch.value = enabled
+        prefs.edit().putBoolean("scan_on_launch", enabled).apply()
+    }
+
+    fun hasUsageAccess(): Boolean {
+        val appOps = getApplication<Application>().getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            appOps.unsafeCheckOpNoThrow(OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), getApplication<Application>().packageName)
+        } else {
+            appOps.checkOpNoThrow(OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), getApplication<Application>().packageName)
+        }
+        return mode == MODE_ALLOWED
+    }
+
+    fun hasAllFilesAccess(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            true // Prior to R, standard permissions were enough for what we did
+        }
     }
 
     fun refreshList() {
@@ -221,15 +288,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun performCleanup() {
+    fun performCleanup(haptics: androidx.compose.ui.hapticfeedback.HapticFeedback? = null) {
         viewModelScope.launch(Dispatchers.IO) {
+            haptics?.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+            var spaceReclaimed = 0L
             val total = discoveredJunk.size
             discoveredJunk.forEachIndexed { index, file ->
-                _uiState.emit(AppUiState.Scanning(index.toFloat() / total, "Deleting: ${file.name}..."))
+                _uiState.emit(AppUiState.Scanning(index.toFloat() / total, "Surgical Removal: ${file.name}..."))
                 try {
+                    val size = if (file.isDirectory) calculateFolderSize(file) else file.length()
                     if (file.isDirectory) file.deleteRecursively() else file.delete()
+                    spaceReclaimed += size
                 } catch (e: Exception) { /* Ignore deletion errors */ }
             }
+            
             _uiState.emit(AppUiState.CleanFinished)
             discoveredJunk = emptyList()
         }
@@ -252,8 +324,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun loadApps() {
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.emit(AppUiState.Loading)
-            val pm = getApplication<Application>().packageManager
+            val context = getApplication<Application>()
+            val pm = context.packageManager
             val packages = pm.getInstalledApplications(PackageManager.GET_META_DATA)
+            
+            // Usage intelligence for "Last Used"
+            val usageStatsManager = context.getSystemService(Application.USAGE_STATS_SERVICE) as UsageStatsManager
+            val endTime = System.currentTimeMillis()
+            val startTime = endTime - (1000L * 60 * 60 * 24 * 365) // 1 year history
+            val usageMap = usageStatsManager.queryAndAggregateUsageStats(startTime, endTime)
             
             val appList = packages.map { appInfo ->
                 val name = pm.getApplicationLabel(appInfo).toString()
@@ -268,6 +347,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val pkgInfo = try { pm.getPackageInfo(pkgName, 0) } catch(e:Exception){ null }
                 val version = pkgInfo?.versionName ?: "1.0"
                 val installedDate = pkgInfo?.firstInstallTime ?: 0L
+                val lastUsed = usageMap[pkgName]?.lastTimeUsed ?: 0L
 
                 AppInfo(
                     name = name,
@@ -278,7 +358,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     sizeBytes = sizeInBytes,
                     icon = icon,
                     isSystem = isSystem,
-                    targetSdk = appInfo.targetSdkVersion
+                    targetSdk = appInfo.targetSdkVersion,
+                    lastUsed = lastUsed,
+                    lastUpdated = pkgInfo?.lastUpdateTime ?: 0L,
+                    installerStore = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        try {
+                            pm.getInstallSourceInfo(pkgName).initiatingPackageName ?: pm.getInstallSourceInfo(pkgName).installingPackageName
+                        } catch (e: Exception) { null }
+                    } else {
+                        @Suppress("DEPRECATION")
+                        pm.getInstallerPackageName(pkgName)
+                    }
                 )
             }.sortedBy { it.name.lowercase() }
 
@@ -295,6 +385,37 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             )
 
             _uiState.emit(if (appList.isEmpty()) AppUiState.Empty else AppUiState.Success(appList, storage))
+        }
+    }
+
+    fun extractApk(app: AppInfo, haptics: androidx.compose.ui.hapticfeedback.HapticFeedback? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                haptics?.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                val context = getApplication<Application>()
+                val pm = context.packageManager
+                val packageInfo = pm.getApplicationInfo(app.packageName, 0)
+                val srcFile = File(packageInfo.sourceDir)
+                
+                val destDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Uninstaller_Backups")
+                if (!destDir.exists()) destDir.mkdirs()
+                
+                val destFile = File(destDir, "${app.name.replace(" ", "_")}_v${app.version}.apk")
+                
+                FileInputStream(srcFile).use { input ->
+                    FileOutputStream(destFile).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "Surgical extraction complete: ${destFile.name}", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(getApplication(), "Extraction failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 }
@@ -331,7 +452,10 @@ data class AppInfo(
     val sizeBytes: Long,
     val icon: Drawable,
     val isSystem: Boolean,
-    val targetSdk: Int
+    val targetSdk: Int,
+    val lastUsed: Long,
+    val lastUpdated: Long,
+    val installerStore: String?
 )
 
 @Composable
@@ -343,12 +467,17 @@ fun UninstallerApp(
     onRequestStoragePermission: () -> Unit
 ) {
     var currentScreen by rememberSaveable { mutableStateOf("home") }
-    val uiState by viewModel.uiState.collectAsState()
+    val currentUiState = viewModel.uiState.collectAsState().value
     val context = LocalContext.current
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+
+    BackHandler(enabled = currentScreen != "home") {
+        currentScreen = "home"
+    }
 
     Scaffold(
         topBar = {
-            if (uiState !is AppUiState.Scanning && uiState !is AppUiState.CleanSummary) {
+            if (currentUiState !is AppUiState.Scanning && currentUiState !is AppUiState.CleanSummary) {
                 UninstallerTopBar(
                     title = if (currentScreen == "home") "UNINSTALLER" else "SETTINGS",
                     isDarkTheme = isDarkTheme,
@@ -356,28 +485,38 @@ fun UninstallerApp(
                     onSettingsClick = { 
                         currentScreen = if (currentScreen == "home") "settings" else "home" 
                     },
-                    showSettings = currentScreen == "home"
+                    showSettings = currentScreen == "home",
+                    onRefresh = if (currentScreen == "home") {{ viewModel.refreshList() }} else null
                 )
             }
         }
     ) { innerPadding ->
         Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
-            when (val state = uiState) {
+            when (val state = currentUiState) {
                 is AppUiState.Loading -> LoadingScreen()
                 is AppUiState.Empty -> EmptyStateScreen { viewModel.refreshList() }
                 is AppUiState.Scanning -> DeepCleanProgressScreen(state.progress, state.currentTask)
                 is AppUiState.CleanSummary -> CleanupSummaryScreen(
                     space = state.spaceFound, 
                     itemsCount = state.itemsCount,
-                    onClean = { viewModel.performCleanup() },
+                    onClean = { viewModel.performCleanup(haptics) },
                     onCancel = { viewModel.backToHome() }
                 )
                 is AppUiState.CleanFinished -> CleanFinishedScreen { viewModel.backToHome() }
                 is AppUiState.Success -> {
+                    val sortBy by viewModel.sortBy.collectAsState()
+                    val isAscending by viewModel.isAscending.collectAsState()
+                    val storageThreshold by viewModel.storageThreshold.collectAsState()
+
                     if (currentScreen == "home") {
                         HomeScreen(
                             apps = state.apps,
                             storage = state.storage,
+                            isRefreshing = currentUiState is AppUiState.Loading && state.apps.isNotEmpty(),
+                            sortBy = sortBy,
+                            isAscending = isAscending,
+                            storageThreshold = storageThreshold,
+                            onSortChange = { s, a -> viewModel.updateSortPreference(s, a) },
                             onUninstallRequest = onUninstallRequest,
                             onDeepCleanStart = {
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -389,10 +528,12 @@ fun UninstallerApp(
                                 } else {
                                     viewModel.startDeepClean()
                                 }
-                            }
+                            },
+                            onRefresh = { viewModel.refreshList() },
+                            onExtract = { viewModel.extractApk(it, haptics) }
                         )
                     } else {
-                        SettingsScreen()
+                        SettingsScreen(viewModel)
                     }
                 }
             }
@@ -449,9 +590,21 @@ fun UninstallerTopBar(
     isDarkTheme: Boolean,
     onThemeToggle: () -> Unit,
     onSettingsClick: () -> Unit,
-    showSettings: Boolean
+    showSettings: Boolean,
+    onRefresh: (() -> Unit)? = null
 ) {
     CenterAlignedTopAppBar(
+        navigationIcon = {
+            if (onRefresh != null) {
+                IconButton(onClick = onRefresh) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Refresh",
+                        tint = EmeraldGreen
+                    )
+                }
+            }
+        },
         title = {
             when (title) {
                 "UNINSTALLER" -> {
@@ -521,16 +674,26 @@ fun UninstallerTopBar(
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(apps: List<AppInfo>, storage: StorageInfo, onUninstallRequest: (String) -> Unit, onDeepCleanStart: () -> Unit) {
+fun HomeScreen(
+    apps: List<AppInfo>, 
+    storage: StorageInfo, 
+    isRefreshing: Boolean,
+    sortBy: String,
+    isAscending: Boolean,
+    storageThreshold: Float,
+    onSortChange: (String, Boolean) -> Unit,
+    onUninstallRequest: (String) -> Unit, 
+    onDeepCleanStart: () -> Unit,
+    onRefresh: () -> Unit,
+    onExtract: (AppInfo) -> Unit
+) {
     var searchQuery by remember { mutableStateOf("") }
     val selectedApps = remember { mutableStateListOf<AppInfo>() }
-    val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { 2 })
+    val pagerState = rememberPagerState(pageCount = { 2 })
     val coroutineScope = rememberCoroutineScope()
     
-    // Sorting States
-    var sortBy by remember { mutableStateOf("Name") }
-    var isAscending by remember { mutableStateOf(true) }
     var showSortMenu by remember { mutableStateOf(false) }
 
     val filteredApps = remember(searchQuery, apps, sortBy, isAscending) {
@@ -538,6 +701,7 @@ fun HomeScreen(apps: List<AppInfo>, storage: StorageInfo, onUninstallRequest: (S
         val sorted = when (sortBy) {
             "Size" -> filtered.sortedBy { it.sizeBytes }
             "Date" -> filtered.sortedBy { it.installedDate }
+            "Date (Used)" -> filtered.sortedBy { it.lastUsed }
             else -> filtered.sortedBy { it.name.lowercase() }
         }
         if (isAscending) sorted else sorted.reversed()
@@ -557,10 +721,20 @@ fun HomeScreen(apps: List<AppInfo>, storage: StorageInfo, onUninstallRequest: (S
         systemListState.scrollToItem(0)
     }
 
+    // Compute usage access here so it's in scope for the sort menu
+    val hasUsageAccess = (context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager).let {
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            it.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), context.packageName)
+        } else {
+            it.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), context.packageName)
+        }
+        mode == AppOpsManager.MODE_ALLOWED
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-            // 1. Unified Search & Sort Row (Ultra-Compact: 36dp)
-            Spacer(modifier = Modifier.height(8.dp))
+            // 1. Unified Search & Sort Row — same height as toggle row (36dp)
+            Spacer(modifier = Modifier.height(12.dp))
             Row(
                 modifier = Modifier.fillMaxWidth().height(36.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -575,60 +749,101 @@ fun HomeScreen(apps: List<AppInfo>, storage: StorageInfo, onUninstallRequest: (S
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(8.dp)),
                     singleLine = true,
                     textStyle = androidx.compose.ui.text.TextStyle(
-                        fontSize = 13.sp,
+                        fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onSurface,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Start
                     ),
                     decorationBox = { innerTextField ->
                         Row(
-                            Modifier.padding(horizontal = 10.dp),
+                            Modifier.padding(horizontal = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.Search, null, tint = EmeraldGreen, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(8.dp))
+                            Icon(Icons.Default.Search, null, tint = EmeraldGreen, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(5.dp))
                             Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                                if (searchQuery.isEmpty()) Text("Search...", fontSize = 13.sp, color = Color.Gray)
+                                if (searchQuery.isEmpty()) Text("Search...", fontSize = 14.sp, color = Color.Gray)
                                 innerTextField()
                             }
                         }
                     }
                 )
 
-                Box(modifier = Modifier.fillMaxHeight()) {
-                    IconButton(
-                        onClick = { showSortMenu = true },
+                Box(modifier = Modifier.size(36.dp)) {
+                    Box(
                         modifier = Modifier
-                            .width(48.dp)
-                            .fillMaxHeight()
+                            .size(36.dp)
                             .background(EmeraldGreen.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                            .clickable { showSortMenu = true },
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.Sort, null, tint = EmeraldGreen, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.Sort, null, tint = EmeraldGreen, modifier = Modifier.size(16.dp))
                     }
 
                     DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
                         Text("Sort By", modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        listOf("Name", "Size", "Date").forEach { option ->
+                        listOf("Name", "Size", "Date", "Date (Used)").forEach { option ->
                             DropdownMenuItem(
                                 text = { Text(option) },
                                 trailingIcon = { if(sortBy == option) Icon(Icons.Default.Check, null, Modifier.size(16.dp)) },
-                                onClick = { sortBy = option; showSortMenu = false }
+                                onClick = { 
+                                    if (option == "Date (Used)" && !hasUsageAccess) {
+                                        try {
+                                            context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                                        } catch (e: Exception) {
+                                            context.startActivity(Intent(Settings.ACTION_SETTINGS))
+                                        }
+                                    } else {
+                                        onSortChange(option, isAscending)
+                                    }
+                                    showSortMenu = false 
+                                }
                             )
                         }
                         HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                         DropdownMenuItem(
                             text = { Text(if (isAscending) "Ascending" else "Descending") },
                             leadingIcon = { Icon(if (isAscending) Icons.Default.VerticalAlignTop else Icons.Default.VerticalAlignBottom, null) },
-                            onClick = { isAscending = !isAscending; showSortMenu = false }
+                            onClick = { onSortChange(sortBy, !isAscending); showSortMenu = false }
                         )
                     }
                 }
             }
 
-            // 2. Free Memory & Total Apps Row (Ultra-Compact: 36dp)
-            Spacer(modifier = Modifier.height(8.dp))
+            // 2. Storage Alert & Info Row
+            val isCritical = storage.percentUsed >= storageThreshold
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            if (isCritical) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    color = Color.Red.copy(alpha = 0.1f),
+                    shape = RoundedCornerShape(8.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.Red.copy(alpha = 0.2f))
+                ) {
+                    Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Warning, null, tint = Color.Red, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("STORAGE CRITICAL ", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color.Red)
+                        Surface(color = Color.Red.copy(alpha = 0.15f), shape = RoundedCornerShape(4.dp)) {
+                            Text(
+                                "${(storage.percentUsed * 100).toInt()}% USED",
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                                fontSize = 9.sp, fontWeight = FontWeight.Black, color = Color.Red
+                            )
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        Text("— Reclaim space now", fontSize = 10.sp, color = Color.Red.copy(alpha = 0.7f))
+                    }
+                }
+            }
+
+            val usedPercent = (storage.percentUsed * 100).toInt()
+            val freePercent = 100 - usedPercent
+
             Surface(
                 modifier = Modifier.fillMaxWidth().height(36.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
+                color = if (isCritical) Color.Red.copy(alpha = 0.05f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
                 shape = RoundedCornerShape(8.dp)
             ) {
                 Row(
@@ -636,22 +851,38 @@ fun HomeScreen(apps: List<AppInfo>, storage: StorageInfo, onUninstallRequest: (S
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Free Memory: ${storage.free} / ${storage.total}",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "Free: ${storage.free} / ${storage.total}",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isCritical) Color.Red else MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(Modifier.width(5.dp))
+                        Surface(
+                            color = if (isCritical) Color.Red.copy(alpha = 0.12f) else EmeraldGreen.copy(alpha = 0.12f),
+                            shape = RoundedCornerShape(4.dp)
+                        ) {
+                            Text(
+                                "$freePercent% free",
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Black,
+                                color = if (isCritical) Color.Red else EmeraldGreen
+                            )
+                        }
+                    }
                     Text(
                         text = "Apps: ${apps.size}",
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
-                        color = EmeraldGreen
+                        color = if (isCritical) Color.Red else EmeraldGreen
                     )
                 }
             }
 
             // 3. Compact Tabs & Select All
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(12.dp))
             Row(
                 modifier = Modifier.fillMaxWidth().height(36.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -659,18 +890,22 @@ fun HomeScreen(apps: List<AppInfo>, storage: StorageInfo, onUninstallRequest: (S
                 val currentVisibleApps = if (pagerState.currentPage == 0) userApps else systemApps
                 val isAllSelected = selectedApps.isNotEmpty() && currentVisibleApps.isNotEmpty() && selectedApps.size >= currentVisibleApps.size
                 
-                Checkbox(
-                    checked = isAllSelected,
-                    onCheckedChange = { 
-                        if (isAllSelected) selectedApps.clear()
-                        else {
-                            selectedApps.clear()
-                            selectedApps.addAll(currentVisibleApps)
-                        }
-                    },
-                    colors = CheckboxDefaults.colors(checkedColor = EmeraldGreen, uncheckedColor = Color.Gray.copy(alpha = 0.5f)),
-                    modifier = Modifier.size(32.dp).padding(end = 4.dp)
-                )
+                if (pagerState.currentPage == 0) {
+                    Checkbox(
+                        checked = isAllSelected,
+                        onCheckedChange = { 
+                            if (isAllSelected) selectedApps.clear()
+                            else {
+                                selectedApps.clear()
+                                selectedApps.addAll(currentVisibleApps)
+                            }
+                        },
+                        colors = CheckboxDefaults.colors(checkedColor = EmeraldGreen, uncheckedColor = Color.Gray.copy(alpha = 0.5f)),
+                        modifier = Modifier.size(32.dp).padding(end = 4.dp)
+                    )
+                } else {
+                    Spacer(Modifier.width(32.dp))
+                }
 
                 Row(
                     modifier = Modifier
@@ -707,27 +942,33 @@ fun HomeScreen(apps: List<AppInfo>, storage: StorageInfo, onUninstallRequest: (S
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // 4. Content Pager (Maximizing List Space)
-            androidx.compose.foundation.pager.HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.weight(1f),
-                key = { it }
-            ) { page ->
-                val pageApps = if (page == 0) userApps else systemApps
-                LazyColumn(
-                    state = if (page == 0) userListState else systemListState,
+            // 4. Content Pager with Pull-to-Refresh
+            PullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = { onRefresh() },
+                modifier = Modifier.weight(1f)
+            ) {
+                HorizontalPager(
+                    state = pagerState,
                     modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                    contentPadding = PaddingValues(bottom = 80.dp)
-                ) {
-                    items(pageApps, key = { it.packageName }) { app ->
-                        val isSelected = selectedApps.contains(app)
-                        AppRow(
-                            app = app,
-                            isSelected = isSelected,
-                            onToggle = { if (isSelected) selectedApps.remove(app) else selectedApps.add(app) },
-                            onMenuClick = { appActionToShow = app }
-                        )
+                    key = { it }
+                ) { page ->
+                    val pageApps = if (page == 0) userApps else systemApps
+                    LazyColumn(
+                        state = if (page == 0) userListState else systemListState,
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        contentPadding = PaddingValues(bottom = 80.dp)
+                    ) {
+                        items(pageApps, key = { it.packageName }) { app ->
+                            val isSelected = selectedApps.contains(app)
+                            AppRow(
+                                app = app,
+                                isSelected = isSelected,
+                                onToggle = { if (isSelected) selectedApps.remove(app) else selectedApps.add(app) },
+                                onMenuClick = { appActionToShow = app }
+                            )
+                        }
                     }
                 }
             }
@@ -797,6 +1038,18 @@ fun HomeScreen(apps: List<AppInfo>, storage: StorageInfo, onUninstallRequest: (S
                         context.startActivity(intent)
                     } catch (e: Exception) {}
                     appActionToShow = null
+                },
+                onExtract = {
+                    onExtract(app)
+                    appActionToShow = null
+                },
+                onShare = {
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, "Quickly uninstalling ${app.name}? Check out this Surgical Uninstaller: https://play.google.com/store/apps/details?id=${app.packageName}")
+                    }
+                    context.startActivity(Intent.createChooser(shareIntent, "Share app link"))
+                    appActionToShow = null
                 }
             )
         }
@@ -807,12 +1060,16 @@ fun AppRow(app: AppInfo, isSelected: Boolean, onToggle: () -> Unit, onMenuClick:
     val canUninstall = !app.isSystem
     
     Surface(
-        onClick = { if (canUninstall) onToggle() },
-        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .combinedClickable(
+                onClick = { if (canUninstall) onToggle() },
+                onLongClick = onMenuClick
+            ),
         color = if (isSelected) LogoPurple.copy(alpha = 0.12f) else Color.Transparent,
         shape = RoundedCornerShape(12.dp),
-        border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, EmeraldGreen.copy(alpha = 0.3f)) else null,
-        enabled = canUninstall
+        border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, EmeraldGreen.copy(alpha = 0.3f)) else null
     ) {
         Row(
             modifier = Modifier.padding(12.dp).graphicsLayer(alpha = if (canUninstall) 1.0f else 0.5f),
@@ -873,7 +1130,9 @@ fun AppActionDialog(
     onDismiss: () -> Unit, 
     onUninstall: () -> Unit, 
     onLaunch: () -> Unit, 
-    onDetails: () -> Unit
+    onDetails: () -> Unit,
+    onExtract: () -> Unit,
+    onShare: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -898,9 +1157,17 @@ fun AppActionDialog(
         },
         text = {
             Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                // Info Grid (2 boxes per row)
+                // Info Grid
                 val sdf = java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.getDefault())
                 val installDate = sdf.format(java.util.Date(app.installedDate))
+                val updateDate = sdf.format(java.util.Date(app.lastUpdated))
+                val lastUsedDate = if (app.lastUsed == 0L) "Never" else sdf.format(java.util.Date(app.lastUsed))
+                val source = when {
+                    app.installerStore == null -> "Sideloaded / Unknown"
+                    app.installerStore.contains("vending") || app.installerStore.contains("play") -> "Google Play"
+                    app.installerStore.contains("amazon") -> "Amazon Store"
+                    else -> app.installerStore
+                }
                 
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     InfoBox(Modifier.weight(1f), "VERSION", app.version, Icons.Default.Info)
@@ -909,26 +1176,36 @@ fun AppActionDialog(
                 Spacer(Modifier.height(8.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     InfoBox(Modifier.weight(1f), "TARGET", "API ${app.targetSdk}", Icons.Default.DataObject)
+                    InfoBox(Modifier.weight(1f), "LAST USED", lastUsedDate, Icons.Default.History)
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     InfoBox(Modifier.weight(1f), "INSTALLED", installDate, Icons.Default.Event)
+                    InfoBox(Modifier.weight(1f), "UPDATED", updateDate, Icons.Default.Update)
+                }
+                Spacer(Modifier.height(8.dp))
+                InfoBox(Modifier.fillMaxWidth(), "INSTALLER SOURCE", source, Icons.Default.Source)
+                
+                Spacer(modifier = Modifier.height(20.dp))
+                
+                // Surgical Action Buttons Row 1: UNINSTALL
+                if (!app.isSystem) {
+                    Button(
+                        onClick = onUninstall,
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.1f), contentColor = Color.Red),
+                        shape = RoundedCornerShape(12.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.Red.copy(alpha = 0.2f))
+                    ) {
+                        Icon(Icons.Default.Delete, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("UNINSTALL", fontSize = 12.sp, fontWeight = FontWeight.Black)
+                    }
+                    Spacer(Modifier.height(8.dp))
                 }
                 
-                Spacer(modifier = Modifier.height(24.dp))
-                
-                // Branded Action Buttons
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (!app.isSystem) {
-                        Button(
-                            onClick = onUninstall,
-                            modifier = Modifier.weight(1f).height(48.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.1f), contentColor = Color.Red),
-                            shape = RoundedCornerShape(12.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color.Red.copy(alpha = 0.2f))
-                        ) {
-                            Icon(Icons.Default.Delete, null, Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("UNINSTALL", fontSize = 12.sp, fontWeight = FontWeight.Black)
-                        }
-                    }
+                // Surgical Action Buttons Row 2: LAUNCH & EXTRACT
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = onLaunch,
                         modifier = Modifier.weight(1f).height(48.dp),
@@ -936,21 +1213,47 @@ fun AppActionDialog(
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Icon(Icons.Default.Launch, null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("LAUNCH", fontSize = 12.sp, fontWeight = FontWeight.Black)
+                        Spacer(Modifier.width(6.dp))
+                        Text("LAUNCH", fontSize = 11.sp, fontWeight = FontWeight.Black)
+                    }
+                    Button(
+                        onClick = onExtract,
+                        modifier = Modifier.weight(1.2f).height(48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = LogoPurple.copy(alpha = 0.1f), contentColor = LogoPurple),
+                        shape = RoundedCornerShape(12.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, LogoPurple.copy(alpha = 0.2f)),
+                        contentPadding = PaddingValues(horizontal = 8.dp)
+                    ) {
+                        Icon(Icons.Default.CloudDownload, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("EXTRACT APK", fontSize = 10.sp, fontWeight = FontWeight.Black, maxLines = 1)
                     }
                 }
+                
                 Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = onDetails,
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = LogoPurple.copy(alpha = 0.1f), contentColor = LogoPurple),
-                    shape = RoundedCornerShape(12.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, LogoPurple.copy(alpha = 0.2f))
-                ) {
-                    Icon(Icons.Default.Settings, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("SYSTEM SETTINGS", fontSize = 12.sp, fontWeight = FontWeight.Black)
+                
+                // Row 3: SHARE & SETTINGS
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = onShare,
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurface),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.Share, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("SHARE", fontSize = 11.sp, fontWeight = FontWeight.Black)
+                    }
+                    Button(
+                        onClick = onDetails,
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurface),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.Settings, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("SETTINGS", fontSize = 11.sp, fontWeight = FontWeight.Black)
+                    }
                 }
             }
         },
@@ -1133,9 +1436,14 @@ fun CleanFinishedScreen(onDone: () -> Unit) {
 }
 
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(viewModel: AppViewModel) {
     val context = LocalContext.current
+    val scanOnLaunch by viewModel.scanOnLaunch.collectAsState()
+    val storageThreshold by viewModel.storageThreshold.collectAsState()
     
+    val hasUsageAccess = viewModel.hasUsageAccess()
+    val hasFileAccess = viewModel.hasAllFilesAccess()
+
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -1160,6 +1468,77 @@ fun SettingsScreen() {
                     HorizontalDivider(color = EmeraldGreen.copy(alpha = 0.1f), thickness = 1.dp, modifier = Modifier.width(100.dp))
                     Spacer(modifier = Modifier.height(12.dp))
                     Text("Version 1.1.0 • Zee Tech", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                }
+            }
+        }
+
+        item {
+            SettingsGroup("Permission Hub") {
+                PermissionHubItem(
+                    label = "Usage Intelligence",
+                    desc = "Enables 'Last Used' tracking for apps.",
+                    isGranted = hasUsageAccess,
+                    onClick = {
+                        try {
+                            context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                        } catch (e: Exception) {
+                            context.startActivity(Intent(Settings.ACTION_SETTINGS))
+                        }
+                    }
+                )
+                HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
+                PermissionHubItem(
+                    label = "Surgical Storage Access",
+                    desc = "Required for Junk & APK Extraction.",
+                    isGranted = hasFileAccess,
+                    onClick = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            try {
+                                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                                intent.data = Uri.parse("package:${context.packageName}")
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                context.startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                            }
+                        }
+                    }
+                )
+            }
+        }
+
+        item {
+            SettingsGroup("Surgical Automation") {
+                SettingsToggle(
+                    label = "Deep Scan on Launch", 
+                    checked = scanOnLaunch,
+                    onCheckedChange = { viewModel.toggleScanOnLaunch(it) }
+                )
+            }
+        }
+
+        item {
+            SettingsGroup("Storage Intelligence") {
+                Column(Modifier.padding(18.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Alert Threshold", fontWeight = FontWeight.Medium)
+                        Text("${(storageThreshold * 100).toInt()}%", color = EmeraldGreen, fontWeight = FontWeight.Black)
+                    }
+                    Slider(
+                        value = storageThreshold,
+                        onValueChange = { viewModel.updateStorageThreshold(it) },
+                        valueRange = 0.5f..0.99f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = EmeraldGreen,
+                            activeTrackColor = EmeraldGreen,
+                            inactiveTrackColor = EmeraldGreen.copy(alpha = 0.2f)
+                        )
+                    )
+                    Text(
+                        "Triggers a visual alert when your system storage exceeds this limit.",
+                        fontSize = 10.sp,
+                        color = Color.Gray,
+                        fontStyle = FontStyle.Italic
+                    )
                 }
             }
         }
@@ -1252,17 +1631,16 @@ fun SettingsItem(icon: ImageVector, label: String, onClick: () -> Unit) {
 }
 
 @Composable
-fun SettingsToggle(label: String, initialValue: Boolean) {
-    var checked by remember { mutableStateOf(initialValue) }
+fun SettingsToggle(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().clickable { checked = !checked }.padding(18.dp),
+        modifier = Modifier.fillMaxWidth().clickable { onCheckedChange(!checked) }.padding(18.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(text = label, fontWeight = FontWeight.Medium)
         Switch(
             checked = checked, 
-            onCheckedChange = { checked = it }, 
+            onCheckedChange = onCheckedChange, 
             colors = SwitchDefaults.colors(
                 checkedThumbColor = EmeraldGreen,
                 checkedTrackColor = EmeraldGreen.copy(alpha = 0.3f),
@@ -1271,5 +1649,33 @@ fun SettingsToggle(label: String, initialValue: Boolean) {
                 uncheckedBorderColor = Color.Gray
             )
         )
+    }
+}
+
+@Composable
+fun PermissionHubItem(label: String, desc: String, isGranted: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(18.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(label, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text(desc, fontSize = 11.sp, color = Color.Gray)
+        }
+        Surface(
+            color = if (isGranted) EmeraldGreen.copy(alpha = 0.1f) else Color.Red.copy(alpha = 0.1f),
+            shape = CircleShape
+        ) {
+            Text(
+                text = if (isGranted) "GRANTED" else "PENDING",
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Black,
+                color = if (isGranted) EmeraldGreen else Color.Red
+            )
+        }
     }
 }
