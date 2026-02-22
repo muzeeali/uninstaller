@@ -1,0 +1,30 @@
+# Android
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Logs and temporary files
+*.log
+*.txt
+!README.md
+
+# OS specific files
+Thumbs.db
+desktop.ini
+
+# Project specific
+capture.png
+*.apk
+*.aab

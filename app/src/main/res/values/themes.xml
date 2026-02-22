@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Uninstaller" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/dark_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/uninstaller</item>
+        <!-- Use EmeraldGreen for the post-splash look -->
+        <item name="postSplashScreenTheme">@style/Theme.Uninstaller</item>
+    </style>
+</resources>
