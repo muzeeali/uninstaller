@@ -79,6 +79,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import androidx.work.WorkManager
 
 class MainActivity : ComponentActivity() {
     private lateinit var viewModel: AppViewModel
@@ -98,6 +99,11 @@ class MainActivity : ComponentActivity() {
         if (viewModel.scanOnLaunch.value && viewModel.hasAllFilesAccess()) {
             viewModel.startDeepClean()
         }
+
+        // Schedule background storage alert worker if enabled
+        if (viewModel.storageAlertsEnabled.value) {
+            StorageAlertWorker.schedule(this)
+        }
         
         enableEdgeToEdge()
         setContent {
@@ -111,6 +117,18 @@ class MainActivity : ComponentActivity() {
                     if (Environment.isExternalStorageManager()) {
                         viewModel.startDeepClean()
                     }
+                }
+            }
+
+            // Request POST_NOTIFICATIONS on Android 13+ on first launch
+            val notificationPermLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestPermission()
+            ) { /* granted or denied — worker checks itself before posting */ }
+            LaunchedEffect(Unit) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    val granted = checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+                        android.content.pm.PackageManager.PERMISSION_GRANTED
+                    if (!granted) notificationPermLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
                 }
             }
 
@@ -167,6 +185,28 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _scanOnLaunch = MutableStateFlow(prefs.getBoolean("scan_on_launch", false))
     val scanOnLaunch: StateFlow<Boolean> = _scanOnLaunch
+
+    private val _extractionPath = MutableStateFlow(
+        prefs.getString("extraction_path",
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).absolutePath + "/Uninstaller_Backups"
+        ) ?: ""
+    )
+    val extractionPath: StateFlow<String> = _extractionPath
+
+    fun updateExtractionPath(path: String) {
+        _extractionPath.value = path
+        prefs.edit().putString("extraction_path", path).apply()
+    }
+
+    private val _storageAlertsEnabled = MutableStateFlow(prefs.getBoolean("storage_alerts_enabled", true))
+    val storageAlertsEnabled: StateFlow<Boolean> = _storageAlertsEnabled
+
+    fun toggleStorageAlerts(enabled: Boolean) {
+        _storageAlertsEnabled.value = enabled
+        prefs.edit().putBoolean("storage_alerts_enabled", enabled).apply()
+        val ctx = getApplication<Application>()
+        if (enabled) StorageAlertWorker.schedule(ctx) else StorageAlertWorker.cancel(ctx)
+    }
 
     private var discoveredJunk = listOf<File>()
 
@@ -396,20 +436,53 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val pm = context.packageManager
                 val packageInfo = pm.getApplicationInfo(app.packageName, 0)
                 val srcFile = File(packageInfo.sourceDir)
-                
-                val destDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Uninstaller_Backups")
+
+                val destDir = File(_extractionPath.value)
                 if (!destDir.exists()) destDir.mkdirs()
-                
+
                 val destFile = File(destDir, "${app.name.replace(" ", "_")}_v${app.version}.apk")
-                
+
                 FileInputStream(srcFile).use { input ->
                     FileOutputStream(destFile).use { output ->
                         input.copyTo(output)
                     }
                 }
-                
+
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "Surgical extraction complete: ${destFile.name}", Toast.LENGTH_LONG).show()
+                    // Fire a notification with the full path
+                    val channelId = "apk_extraction"
+                    val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        val channel = android.app.NotificationChannel(
+                            channelId,
+                            "APK Extraction",
+                            android.app.NotificationManager.IMPORTANCE_DEFAULT
+                        ).apply { description = "Notifies when an APK backup is complete" }
+                        notificationManager.createNotificationChannel(channel)
+                    }
+
+                    val canPostNotification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+                            android.content.pm.PackageManager.PERMISSION_GRANTED
+                    } else true
+
+                    if (canPostNotification) {
+                        val notification = androidx.core.app.NotificationCompat.Builder(context, channelId)
+                            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                            .setContentTitle("✅ APK Extraction Complete")
+                            .setContentText("${app.name} saved to ${destFile.absolutePath}")
+                            .setStyle(
+                                androidx.core.app.NotificationCompat.BigTextStyle()
+                                    .bigText("${app.name} backed up successfully.\n\nSaved to:\n${destFile.absolutePath}")
+                            )
+                            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_DEFAULT)
+                            .setAutoCancel(true)
+                            .build()
+                        notificationManager.notify(app.packageName.hashCode(), notification)
+                    } else {
+                        Toast.makeText(context, "Saved: ${destFile.absolutePath}", Toast.LENGTH_LONG).show()
+                    }
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -1440,9 +1513,30 @@ fun SettingsScreen(viewModel: AppViewModel) {
     val context = LocalContext.current
     val scanOnLaunch by viewModel.scanOnLaunch.collectAsState()
     val storageThreshold by viewModel.storageThreshold.collectAsState()
-    
-    val hasUsageAccess = viewModel.hasUsageAccess()
-    val hasFileAccess = viewModel.hasAllFilesAccess()
+
+    // Permission state — re-checked on every resume so granting in system settings reflects immediately
+    fun checkNotifAccess() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+    } else true
+
+    var hasUsageAccess by remember { mutableStateOf(viewModel.hasUsageAccess()) }
+    var hasFileAccess by remember { mutableStateOf(viewModel.hasAllFilesAccess()) }
+    var hasNotificationAccess by remember { mutableStateOf(checkNotifAccess()) }
+
+    // Re-check permissions whenever the user returns to the app (e.g. from system settings)
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                hasUsageAccess = viewModel.hasUsageAccess()
+                hasFileAccess = viewModel.hasAllFilesAccess()
+                hasNotificationAccess = checkNotifAccess()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -1503,16 +1597,167 @@ fun SettingsScreen(viewModel: AppViewModel) {
                         }
                     }
                 )
+                HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
+                val notifHubLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestPermission()
+                ) { granted ->
+                    // Mark that we have asked at least once (to detect permanent denial later)
+                    context.getSharedPreferences("surgical_uninstaller_prefs", android.content.Context.MODE_PRIVATE)
+                        .edit().putBoolean("notif_perm_asked", true).apply()
+                }
+                PermissionHubItem(
+                    label = "Push Notifications",
+                    desc = "Storage alerts & APK extraction notifications.",
+                    isGranted = hasNotificationAccess,
+                    onClick = {
+                        // Helper: open app notification settings (always works, even when permanently denied)
+                        fun openNotifSettings() {
+                            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                            }
+                            context.startActivity(intent)
+                        }
+
+                        if (!hasNotificationAccess && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            val hasAsked = context.getSharedPreferences("surgical_uninstaller_prefs", android.content.Context.MODE_PRIVATE)
+                                .getBoolean("notif_perm_asked", false)
+                            val canShowRationale = (context as? android.app.Activity)
+                                ?.shouldShowRequestPermissionRationale(android.Manifest.permission.POST_NOTIFICATIONS)
+                                ?: false
+
+                            when {
+                                // Never asked yet → show the permission dialog
+                                !hasAsked -> notifHubLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                                // Denied once (not permanent) → show dialog again
+                                canShowRationale -> notifHubLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                                // Permanently denied → must go to system settings
+                                else -> openNotifSettings()
+                            }
+                        } else {
+                            // Granted or pre-Android 13 → open notification channel settings
+                            fun openNotifSettings2() {
+                                val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                    putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                }
+                                context.startActivity(intent)
+                            }
+                            openNotifSettings2()
+                        }
+                    }
+                )
             }
         }
 
         item {
             SettingsGroup("Surgical Automation") {
                 SettingsToggle(
-                    label = "Deep Scan on Launch", 
+                    label = "Deep Scan on Launch",
                     checked = scanOnLaunch,
                     onCheckedChange = { viewModel.toggleScanOnLaunch(it) }
                 )
+                HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
+                // APK extraction path — folder picker + manual edit fallback
+                val extractionPath by viewModel.extractionPath.collectAsState()
+                var pathEditValue by remember(extractionPath) { mutableStateOf(extractionPath) }
+                var isEditing by remember { mutableStateOf(false) }
+
+                // Folder picker launcher
+                val folderPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+                    contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree()
+                ) { uri ->
+                    if (uri != null) {
+                        val docId = android.provider.DocumentsContract.getTreeDocumentId(uri)
+                        val parts = docId.split(":")
+                        val realPath = when {
+                            parts[0].equals("primary", ignoreCase = true) ->
+                                "${Environment.getExternalStorageDirectory().absolutePath}/${parts.getOrElse(1) { "" }}"
+                            parts[0].equals("home", ignoreCase = true) ->
+                                "${Environment.getExternalStorageDirectory().absolutePath}/Documents/${parts.getOrElse(1) { "" }}"
+                            else ->
+                                "/storage/${parts[0]}/${parts.getOrElse(1) { "" }}"
+                        }.trimEnd('/')
+                        pathEditValue = realPath
+                        viewModel.updateExtractionPath(realPath)
+                        isEditing = false
+                    }
+                }
+
+                Column(Modifier.padding(horizontal = 18.dp, vertical = 12.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.FolderOpen, null, tint = EmeraldGreen, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("APK Backup Path", fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                color = EmeraldGreen.copy(alpha = 0.12f),
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.clickable { folderPickerLauncher.launch(null) }
+                            ) {
+                                Row(Modifier.padding(horizontal = 7.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Folder, null, tint = EmeraldGreen, modifier = Modifier.size(13.dp))
+                                    Spacer(Modifier.width(3.dp))
+                                    Text("BROWSE", fontSize = 10.sp, fontWeight = FontWeight.Black, color = EmeraldGreen)
+                                }
+                            }
+                            Spacer(Modifier.width(6.dp))
+                            Surface(
+                                color = LogoPurple.copy(alpha = 0.12f),
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.clickable {
+                                    if (isEditing) viewModel.updateExtractionPath(pathEditValue.trim())
+                                    isEditing = !isEditing
+                                }
+                            ) {
+                                Text(
+                                    if (isEditing) "SAVE" else "EDIT",
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = if (isEditing) EmeraldGreen else LogoPurple
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    if (isEditing) {
+                        androidx.compose.foundation.text.BasicTextField(
+                            value = pathEditValue,
+                            onValueChange = { pathEditValue = it },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            singleLine = false,
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                            )
+                        )
+                    } else {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text(
+                                text = extractionPath,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                fontSize = 11.sp,
+                                color = EmeraldGreen.copy(alpha = 0.85f),
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -1540,6 +1785,56 @@ fun SettingsScreen(viewModel: AppViewModel) {
                         fontStyle = FontStyle.Italic
                     )
                 }
+                HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
+                // Storage Alert Notifications — belongs here next to the threshold setting
+                val storageAlertsEnabled by viewModel.storageAlertsEnabled.collectAsState()
+                val notifToggleLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestPermission()
+                ) { granted ->
+                    // Mark asked; if granted enable alert, if denied open notification settings
+                    context.getSharedPreferences("surgical_uninstaller_prefs", android.content.Context.MODE_PRIVATE)
+                        .edit().putBoolean("notif_perm_asked", true).apply()
+                    if (granted) {
+                        viewModel.toggleStorageAlerts(true)
+                    } else {
+                        // Dialog was shown but user denied → open settings so they know where to enable it
+                        val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                        }
+                        context.startActivity(intent)
+                    }
+                }
+                SettingsToggle(
+                    label = "Storage Alert Notifications",
+                    checked = storageAlertsEnabled,
+                    onCheckedChange = { enabled ->
+                        if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            val isGranted = context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+                                android.content.pm.PackageManager.PERMISSION_GRANTED
+                            if (!isGranted) {
+                                val hasAsked = context.getSharedPreferences("surgical_uninstaller_prefs", android.content.Context.MODE_PRIVATE)
+                                    .getBoolean("notif_perm_asked", false)
+                                val canShowRationale = (context as? android.app.Activity)
+                                    ?.shouldShowRequestPermissionRationale(android.Manifest.permission.POST_NOTIFICATIONS)
+                                    ?: false
+                                when {
+                                    // Never asked or denied-once → show dialog
+                                    !hasAsked || canShowRationale ->
+                                        notifToggleLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                                    // Permanently denied → open settings
+                                    else -> {
+                                        val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                        }
+                                        context.startActivity(intent)
+                                    }
+                                }
+                                return@SettingsToggle
+                            }
+                        }
+                        viewModel.toggleStorageAlerts(enabled)
+                    }
+                )
             }
         }
 
