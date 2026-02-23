@@ -172,6 +172,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow<AppUiState>(AppUiState.Loading)
     val uiState: StateFlow<AppUiState> = _uiState
 
+    // Icon cache: loaded lazily after the list is displayed
+    private val _iconCache = MutableStateFlow<Map<String, Drawable>>(emptyMap())
+    val iconCache: StateFlow<Map<String, Drawable>> = _iconCache
+
+    // Cached success state — avoids reloading when navigating back from a popup
+    private var cachedSuccessState: AppUiState.Success? = null
+
     private val prefs = application.getSharedPreferences("surgical_uninstaller_prefs", Context.MODE_PRIVATE)
     
     private val _sortBy = MutableStateFlow(prefs.getString("sort_by", "Name") ?: "Name")
@@ -249,7 +256,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshList() {
-        loadApps()
+        loadApps(force = true)   // Force reload after uninstall
     }
 
     fun startDeepClean() {
@@ -358,73 +365,97 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun backToHome() {
-        loadApps()
+        // Restore cached list instantly — no reload needed
+        val cached = cachedSuccessState
+        if (cached != null) {
+            viewModelScope.launch { _uiState.emit(cached) }
+        } else {
+            loadApps(force = true)
+        }
     }
 
-    private fun loadApps() {
+    private fun loadApps(force: Boolean = false) {
+        // Skip reload if we already have cached data (e.g. returning from a popup)
+        if (!force && cachedSuccessState != null) {
+            viewModelScope.launch { _uiState.emit(cachedSuccessState!!) }
+            return
+        }
+
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.emit(AppUiState.Loading)
             val context = getApplication<Application>()
             val pm = context.packageManager
-            val packages = pm.getInstalledApplications(PackageManager.GET_META_DATA)
-            
-            // Usage intelligence for "Last Used"
-            val usageStatsManager = context.getSystemService(Application.USAGE_STATS_SERVICE) as UsageStatsManager
-            val endTime = System.currentTimeMillis()
-            val startTime = endTime - (1000L * 60 * 60 * 24 * 365) // 1 year history
-            val usageMap = usageStatsManager.queryAndAggregateUsageStats(startTime, endTime)
-            
-            val appList = packages.map { appInfo ->
-                val name = pm.getApplicationLabel(appInfo).toString()
-                val pkgName = appInfo.packageName
-                val isSystem = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-                val icon = pm.getApplicationIcon(appInfo)
-                
-                val file = File(appInfo.sourceDir)
-                val sizeInBytes = if (file.exists()) file.length() else 0L
-                val size = formatSize(sizeInBytes)
 
-                val pkgInfo = try { pm.getPackageInfo(pkgName, 0) } catch(e:Exception){ null }
-                val version = pkgInfo?.versionName ?: "1.0"
-                val installedDate = pkgInfo?.firstInstallTime ?: 0L
-                val lastUsed = usageMap[pkgName]?.lastTimeUsed ?: 0L
+            // ONE bulk call: getInstalledPackages gives us PackageInfo (version, dates) in one shot
+            // No more N individual getPackageInfo() IPC calls
+            @Suppress("DEPRECATION")
+            val packages = pm.getInstalledPackages(PackageManager.GET_META_DATA)
+
+            // Usage stats — 30 days is plenty (was 365 days = huge dataset)
+            val usageMap: Map<String, android.app.usage.UsageStats> = try {
+                if (hasUsageAccess()) {
+                    val mgr = context.getSystemService(Application.USAGE_STATS_SERVICE) as UsageStatsManager
+                    val end = System.currentTimeMillis()
+                    mgr.queryAndAggregateUsageStats(end - 30L * 24 * 60 * 60 * 1000, end)
+                } else emptyMap()
+            } catch (e: Exception) { emptyMap() }
+
+            // Build list WITHOUT icons — icons load separately so UI appears immediately
+            val appList = packages.mapNotNull { pkgInfo ->
+                val appInfo = pkgInfo.applicationInfo ?: return@mapNotNull null
+                val pkgName = appInfo.packageName
+                val file = File(appInfo.sourceDir)
+                val sizeBytes = if (file.exists()) file.length() else 0L
+
+                val installerStore: String? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    try {
+                        val src = pm.getInstallSourceInfo(pkgName)
+                        src.initiatingPackageName ?: src.installingPackageName
+                    } catch (e: Exception) { null }
+                } else {
+                    @Suppress("DEPRECATION") pm.getInstallerPackageName(pkgName)
+                }
 
                 AppInfo(
-                    name = name,
+                    name = pm.getApplicationLabel(appInfo).toString(),
                     packageName = pkgName,
-                    version = version,
-                    installedDate = installedDate,
-                    size = size,
-                    sizeBytes = sizeInBytes,
-                    icon = icon,
-                    isSystem = isSystem,
+                    version = pkgInfo.versionName ?: "1.0",
+                    installedDate = pkgInfo.firstInstallTime,
+                    size = formatSize(sizeBytes),
+                    sizeBytes = sizeBytes,
+                    icon = null,           // Loaded in background below
+                    isSystem = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0,
                     targetSdk = appInfo.targetSdkVersion,
-                    lastUsed = lastUsed,
-                    lastUpdated = pkgInfo?.lastUpdateTime ?: 0L,
-                    installerStore = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        try {
-                            pm.getInstallSourceInfo(pkgName).initiatingPackageName ?: pm.getInstallSourceInfo(pkgName).installingPackageName
-                        } catch (e: Exception) { null }
-                    } else {
-                        @Suppress("DEPRECATION")
-                        pm.getInstallerPackageName(pkgName)
-                    }
+                    lastUsed = usageMap[pkgName]?.lastTimeUsed ?: 0L,
+                    lastUpdated = pkgInfo.lastUpdateTime,
+                    installerStore = installerStore
                 )
             }.sortedBy { it.name.lowercase() }
 
-            val path = Environment.getDataDirectory()
-            val stat = StatFs(path.path)
-            val blockSize = stat.blockSizeLong
-            val totalBlocks = stat.blockCountLong
-            val availableBlocks = stat.availableBlocksLong
-            
+            val stat = StatFs(Environment.getDataDirectory().path)
+            val bs = stat.blockSizeLong
             val storage = StorageInfo(
-                free = formatSize(availableBlocks * blockSize),
-                total = formatSize(totalBlocks * blockSize),
-                percentUsed = 1f - (availableBlocks.toFloat() / totalBlocks)
+                free = formatSize(stat.availableBlocksLong * bs),
+                total = formatSize(stat.blockCountLong * bs),
+                percentUsed = 1f - (stat.availableBlocksLong.toFloat() / stat.blockCountLong)
             )
 
-            _uiState.emit(if (appList.isEmpty()) AppUiState.Empty else AppUiState.Success(appList, storage))
+            val successState = if (appList.isEmpty()) null else AppUiState.Success(appList, storage)
+            cachedSuccessState = successState
+            _uiState.emit(successState ?: AppUiState.Empty)
+
+            // Load icons lazily in batches — UI is already visible and interactive
+            val newCache = mutableMapOf<String, Drawable>()
+            packages.chunked(30).forEach { chunk ->
+                chunk.forEach { pkgInfo ->
+                    val appInfo = pkgInfo.applicationInfo ?: return@forEach
+                    try {
+                        newCache[appInfo.packageName] = pm.getApplicationIcon(appInfo)
+                    } catch (e: Exception) { /* skip bad icon */ }
+                }
+                // Publish batch so icons appear progressively
+                _iconCache.value = newCache.toMap()
+            }
         }
     }
 
@@ -435,16 +466,40 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val context = getApplication<Application>()
                 val pm = context.packageManager
                 val packageInfo = pm.getApplicationInfo(app.packageName, 0)
-                val srcFile = File(packageInfo.sourceDir)
+                val isSplit = packageInfo.splitSourceDirs != null && packageInfo.splitSourceDirs!!.isNotEmpty()
 
                 val destDir = File(_extractionPath.value)
                 if (!destDir.exists()) destDir.mkdirs()
 
-                val destFile = File(destDir, "${app.name.replace(" ", "_")}_v${app.version}.apk")
+                val extension = if (isSplit) "apks" else "apk"
+                val destFile = File(destDir, "${app.name.replace(" ", "_")}_v${app.version}.$extension")
 
-                FileInputStream(srcFile).use { input ->
-                    FileOutputStream(destFile).use { output ->
-                        input.copyTo(output)
+                if (isSplit) {
+                    // It's an App Bundle. Zip the base APK and all splits together.
+                    java.util.zip.ZipOutputStream(FileOutputStream(destFile)).use { zos ->
+                        val baseFile = File(packageInfo.sourceDir)
+                        baseFile.inputStream().use { input ->
+                            zos.putNextEntry(java.util.zip.ZipEntry("base.apk"))
+                            input.copyTo(zos)
+                            zos.closeEntry()
+                        }
+                        
+                        packageInfo.splitSourceDirs?.forEach { splitPath ->
+                            val splitFile = File(splitPath)
+                            splitFile.inputStream().use { input ->
+                                zos.putNextEntry(java.util.zip.ZipEntry(splitFile.name))
+                                input.copyTo(zos)
+                                zos.closeEntry()
+                            }
+                        }
+                    }
+                } else {
+                    // Standard single APK
+                    val srcFile = File(packageInfo.sourceDir)
+                    FileInputStream(srcFile).use { input ->
+                        FileOutputStream(destFile).use { output ->
+                            input.copyTo(output)
+                        }
                     }
                 }
 
@@ -471,7 +526,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         val notification = androidx.core.app.NotificationCompat.Builder(context, channelId)
                             .setSmallIcon(android.R.drawable.stat_sys_download_done)
                             .setContentTitle("✅ APK Extraction Complete")
-                            .setContentText("${app.name} saved to ${destFile.absolutePath}")
+                            .setContentText("${app.name} saved successfully")
                             .setStyle(
                                 androidx.core.app.NotificationCompat.BigTextStyle()
                                     .bigText("${app.name} backed up successfully.\n\nSaved to:\n${destFile.absolutePath}")
@@ -523,7 +578,7 @@ data class AppInfo(
     val installedDate: Long,
     val size: String,
     val sizeBytes: Long,
-    val icon: Drawable,
+    val icon: Drawable?,          // Null until lazy-loaded into iconCache
     val isSystem: Boolean,
     val targetSdk: Int,
     val lastUsed: Long,
@@ -580,11 +635,13 @@ fun UninstallerApp(
                     val sortBy by viewModel.sortBy.collectAsState()
                     val isAscending by viewModel.isAscending.collectAsState()
                     val storageThreshold by viewModel.storageThreshold.collectAsState()
+                    val iconCache by viewModel.iconCache.collectAsState()
 
                     if (currentScreen == "home") {
                         HomeScreen(
                             apps = state.apps,
                             storage = state.storage,
+                            iconCache = iconCache,
                             isRefreshing = currentUiState is AppUiState.Loading && state.apps.isNotEmpty(),
                             sortBy = sortBy,
                             isAscending = isAscending,
@@ -751,7 +808,8 @@ fun UninstallerTopBar(
 @Composable
 fun HomeScreen(
     apps: List<AppInfo>, 
-    storage: StorageInfo, 
+    storage: StorageInfo,
+    iconCache: Map<String, Drawable>,
     isRefreshing: Boolean,
     sortBy: String,
     isAscending: Boolean,
@@ -1037,6 +1095,7 @@ fun HomeScreen(
                             val isSelected = selectedApps.contains(app)
                             AppRow(
                                 app = app,
+                                icon = iconCache[app.packageName],
                                 isSelected = isSelected,
                                 onToggle = { if (isSelected) selectedApps.remove(app) else selectedApps.add(app) },
                                 onMenuClick = { appActionToShow = app }
@@ -1091,6 +1150,7 @@ fun HomeScreen(
         appActionToShow?.let { app ->
             AppActionDialog(
                 app = app,
+                icon = iconCache[app.packageName],
                 onDismiss = { appActionToShow = null },
                 onUninstall = { 
                     onUninstallRequest(app.packageName)
@@ -1119,7 +1179,8 @@ fun HomeScreen(
                 onShare = {
                     val shareIntent = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
-                        putExtra(Intent.EXTRA_TEXT, "Quickly uninstalling ${app.name}? Check out this Surgical Uninstaller: https://play.google.com/store/apps/details?id=${app.packageName}")
+                        val myPackage = context.packageName
+                        putExtra(Intent.EXTRA_TEXT, "Quickly uninstalling ${app.name}? Check out this Surgical Uninstaller: https://play.google.com/store/apps/details?id=$myPackage")
                     }
                     context.startActivity(Intent.createChooser(shareIntent, "Share app link"))
                     appActionToShow = null
@@ -1129,7 +1190,7 @@ fun HomeScreen(
 }
 
 @Composable
-fun AppRow(app: AppInfo, isSelected: Boolean, onToggle: () -> Unit, onMenuClick: () -> Unit) {
+fun AppRow(app: AppInfo, icon: Drawable?, isSelected: Boolean, onToggle: () -> Unit, onMenuClick: () -> Unit) {
     val canUninstall = !app.isSystem
     
     Surface(
@@ -1165,12 +1226,25 @@ fun AppRow(app: AppInfo, isSelected: Boolean, onToggle: () -> Unit, onMenuClick:
                 )
             }
 
-            val painter = remember(app.icon) { BitmapPainter(app.icon.toBitmap().asImageBitmap()) }
-            Image(
-                painter = painter,
-                contentDescription = null,
-                modifier = Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)
-            )
+            // App icon — shows placeholder until lazy icon loads
+            val bitmap = remember(icon) { icon?.toBitmap()?.asImageBitmap() }
+            if (bitmap != null) {
+                Image(
+                    painter = BitmapPainter(bitmap),
+                    contentDescription = null,
+                    modifier = Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)
+                )
+            } else {
+                Box(
+                    modifier = Modifier.size(44.dp).clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Android, null,
+                        tint = EmeraldGreen.copy(alpha = 0.4f),
+                        modifier = Modifier.size(26.dp))
+                }
+            }
             
             Spacer(modifier = Modifier.width(16.dp))
             
@@ -1199,7 +1273,8 @@ fun AppRow(app: AppInfo, isSelected: Boolean, onToggle: () -> Unit, onMenuClick:
 
 @Composable
 fun AppActionDialog(
-    app: AppInfo, 
+    app: AppInfo,
+    icon: Drawable?,
     onDismiss: () -> Unit, 
     onUninstall: () -> Unit, 
     onLaunch: () -> Unit, 
@@ -1215,13 +1290,25 @@ fun AppActionDialog(
         },
         title = {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                val painter = remember(app.icon) { BitmapPainter(app.icon.toBitmap().asImageBitmap()) }
+                val bitmap = remember(icon) { icon?.toBitmap()?.asImageBitmap() }
                 Surface(
                     shape = CircleShape, 
                     border = androidx.compose.foundation.BorderStroke(2.dp, EmeraldGreen.copy(alpha = 0.5f)),
                     shadowElevation = 8.dp
                 ) {
-                    Image(painter, null, Modifier.size(72.dp).padding(8.dp).clip(CircleShape))
+                    if (bitmap != null) {
+                        Image(BitmapPainter(bitmap), null, Modifier.size(72.dp).padding(8.dp).clip(CircleShape))
+                    } else {
+                        Box(
+                            modifier = Modifier.size(72.dp).padding(8.dp).clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Android, null,
+                                tint = EmeraldGreen.copy(alpha = 0.4f),
+                                modifier = Modifier.size(40.dp))
+                        }
+                    }
                 }
                 Spacer(Modifier.height(16.dp))
                 Text(app.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
@@ -1693,69 +1780,22 @@ fun SettingsScreen(viewModel: AppViewModel) {
                             Spacer(Modifier.width(8.dp))
                             Text("APK Backup Path", fontWeight = FontWeight.Medium, fontSize = 14.sp)
                         }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Surface(
-                                color = EmeraldGreen.copy(alpha = 0.12f),
-                                shape = RoundedCornerShape(6.dp),
-                                modifier = Modifier.clickable { folderPickerLauncher.launch(null) }
-                            ) {
-                                Row(Modifier.padding(horizontal = 7.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.Folder, null, tint = EmeraldGreen, modifier = Modifier.size(13.dp))
-                                    Spacer(Modifier.width(3.dp))
-                                    Text("BROWSE", fontSize = 10.sp, fontWeight = FontWeight.Black, color = EmeraldGreen)
-                                }
-                            }
-                            Spacer(Modifier.width(6.dp))
-                            Surface(
-                                color = LogoPurple.copy(alpha = 0.12f),
-                                shape = RoundedCornerShape(6.dp),
-                                modifier = Modifier.clickable {
-                                    if (isEditing) viewModel.updateExtractionPath(pathEditValue.trim())
-                                    isEditing = !isEditing
-                                }
-                            ) {
-                                Text(
-                                    if (isEditing) "SAVE" else "EDIT",
-                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Black,
-                                    color = if (isEditing) EmeraldGreen else LogoPurple
-                                )
-                            }
-                        }
                     }
-                    Spacer(Modifier.height(6.dp))
-                    if (isEditing) {
-                        androidx.compose.foundation.text.BasicTextField(
-                            value = pathEditValue,
-                            onValueChange = { pathEditValue = it },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                            singleLine = false,
-                            textStyle = androidx.compose.ui.text.TextStyle(
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                            )
+                    Spacer(Modifier.height(8.dp))
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text(
+                            text = extractionPath,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                            fontSize = 11.sp,
+                            color = EmeraldGreen.copy(alpha = 0.85f),
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
                         )
-                    } else {
-                        Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
-                            shape = RoundedCornerShape(6.dp)
-                        ) {
-                            Text(
-                                text = extractionPath,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                                fontSize = 11.sp,
-                                color = EmeraldGreen.copy(alpha = 0.85f),
-                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                                maxLines = 3,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
                     }
                 }
             }
@@ -1875,6 +1915,19 @@ fun SettingsScreen(viewModel: AppViewModel) {
                         } catch (e: Exception) {}
                     }
                 )
+                HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
+                SettingsItem(
+                    icon = Icons.Default.Share,
+                    label = "Share App",
+                    onClick = {
+                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            val myPackage = context.packageName
+                            putExtra(Intent.EXTRA_TEXT, "Free up space with Surgical Uninstaller: https://play.google.com/store/apps/details?id=$myPackage")
+                        }
+                        context.startActivity(Intent.createChooser(shareIntent, "Share app link"))
+                    }
+                )
             }
         }
 
@@ -1965,7 +2018,7 @@ fun PermissionHubItem(label: String, desc: String, isGranted: Boolean, onClick: 
             shape = CircleShape
         ) {
             Text(
-                text = if (isGranted) "GRANTED" else "PENDING",
+                text = if (isGranted) "Allowed" else "Allow",
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Black,

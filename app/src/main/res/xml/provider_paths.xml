@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Expose all of external storage (the whole /storage/emulated/0/) so any backup path is covered -->
+    <external-path name="external_storage_root" path="." />
+</paths>
