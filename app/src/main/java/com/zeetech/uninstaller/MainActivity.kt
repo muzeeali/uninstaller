@@ -500,9 +500,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     FileInputStream(srcFile).use { input ->
                         FileOutputStream(destFile).use { output ->
                             input.copyTo(output)
+                            output.flush()
                         }
                     }
+                    if (destFile.length() != srcFile.length()) {
+                        destFile.delete()
+                        throw Exception("File size mismatch: Extraction incomplete or corrupt.")
+                    }
                 }
+
+                // Force Android's Media Scanner to see the new file immediately so it's not marked as corrupt or broken
+                android.media.MediaScannerConnection.scanFile(
+                    context,
+                    arrayOf(destFile.absolutePath),
+                    null,
+                    null
+                )
 
                 withContext(Dispatchers.Main) {
                     // Fire a notification with the full path
@@ -528,37 +541,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                             .setSmallIcon(android.R.drawable.stat_sys_download_done)
                             .setContentTitle(if (isSplit) "📦 Bundle Backup Complete" else "✅ APK Extraction Complete")
                             .setContentText(
-                                if (isSplit) "${app.name} saved as .apks bundle — needs SAI to install"
+                                if (isSplit) "${app.name} saved as a .apks bundle package"
                                 else "${app.name} saved as .apk — tap file to install"
                             )
                             .setStyle(
                                 androidx.core.app.NotificationCompat.BigTextStyle()
                                     .bigText(
                                         if (isSplit)
-                                            "${app.name} backed up as an App Bundle (.apks).\n\nSaved to:\n${destFile.absolutePath}\n\n⚠️ To install, use 'SAI - Split APKs Installer' (free on Play Store)."
+                                            "${app.name} backed up as an App Bundle (.apks). This contains multiple split APKs.\n\nSaved to:\n${destFile.absolutePath}"
                                         else
                                             "${app.name} backed up successfully.\n\nSaved to:\n${destFile.absolutePath}"
                                     )
                             )
                             .setPriority(androidx.core.app.NotificationCompat.PRIORITY_DEFAULT)
                             .setAutoCancel(true)
-
-                        // For split APKs, add a one-tap action to get SAI from Play Store
-                        if (isSplit) {
-                            val saiIntent = Intent(
-                                Intent.ACTION_VIEW,
-                                android.net.Uri.parse("https://play.google.com/store/apps/details?id=com.aefyr.sai")
-                            ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
-                            val saiPendingIntent = android.app.PendingIntent.getActivity(
-                                context, 0, saiIntent,
-                                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-                            )
-                            notifBuilder.addAction(
-                                android.R.drawable.stat_sys_download,
-                                "Get SAI (Installer)",
-                                saiPendingIntent
-                            )
-                        }
 
                         notificationManager.notify(app.packageName.hashCode(), notifBuilder.build())
                     } else {
@@ -1407,7 +1403,7 @@ fun AppActionDialog(
                             Icon(Icons.Default.Info, null, tint = Color(0xFFFF8C00), modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(6.dp))
                             Text(
-                                "Play Store App Bundle — backup requires SAI to install",
+                                "Play Store App Bundle — backs up as a .apks bundle package",
                                 fontSize = 10.sp,
                                 color = Color(0xFFFF8C00),
                                 fontWeight = FontWeight.Medium
@@ -1446,7 +1442,7 @@ fun AppActionDialog(
                         Icon(if (app.isSplitApk) Icons.Default.FolderZip else Icons.Default.CloudDownload, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(4.dp))
                         Text(
-                            if (app.isSplitApk) "BACKUP BUNDLE" else "EXTRACT APK",
+                            if (app.isSplitApk) "EXTRACT .APKS" else "EXTRACT APK",
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Black,
                             maxLines = 1
