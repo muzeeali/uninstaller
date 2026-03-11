@@ -428,7 +428,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     targetSdk = appInfo.targetSdkVersion,
                     lastUsed = usageMap[pkgName]?.lastTimeUsed ?: 0L,
                     lastUpdated = pkgInfo.lastUpdateTime,
-                    installerStore = installerStore
+                    installerStore = installerStore,
+                    isSplitApk = !appInfo.splitSourceDirs.isNullOrEmpty()
                 )
             }.sortedBy { it.name.lowercase() }
 
@@ -523,18 +524,43 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     } else true
 
                     if (canPostNotification) {
-                        val notification = androidx.core.app.NotificationCompat.Builder(context, channelId)
+                        val notifBuilder = androidx.core.app.NotificationCompat.Builder(context, channelId)
                             .setSmallIcon(android.R.drawable.stat_sys_download_done)
-                            .setContentTitle("✅ APK Extraction Complete")
-                            .setContentText("${app.name} saved successfully")
+                            .setContentTitle(if (isSplit) "📦 Bundle Backup Complete" else "✅ APK Extraction Complete")
+                            .setContentText(
+                                if (isSplit) "${app.name} saved as .apks bundle — needs SAI to install"
+                                else "${app.name} saved as .apk — tap file to install"
+                            )
                             .setStyle(
                                 androidx.core.app.NotificationCompat.BigTextStyle()
-                                    .bigText("${app.name} backed up successfully.\n\nSaved to:\n${destFile.absolutePath}")
+                                    .bigText(
+                                        if (isSplit)
+                                            "${app.name} backed up as an App Bundle (.apks).\n\nSaved to:\n${destFile.absolutePath}\n\n⚠️ To install, use 'SAI - Split APKs Installer' (free on Play Store)."
+                                        else
+                                            "${app.name} backed up successfully.\n\nSaved to:\n${destFile.absolutePath}"
+                                    )
                             )
                             .setPriority(androidx.core.app.NotificationCompat.PRIORITY_DEFAULT)
                             .setAutoCancel(true)
-                            .build()
-                        notificationManager.notify(app.packageName.hashCode(), notification)
+
+                        // For split APKs, add a one-tap action to get SAI from Play Store
+                        if (isSplit) {
+                            val saiIntent = Intent(
+                                Intent.ACTION_VIEW,
+                                android.net.Uri.parse("https://play.google.com/store/apps/details?id=com.aefyr.sai")
+                            ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                            val saiPendingIntent = android.app.PendingIntent.getActivity(
+                                context, 0, saiIntent,
+                                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+                            )
+                            notifBuilder.addAction(
+                                android.R.drawable.stat_sys_download,
+                                "Get SAI (Installer)",
+                                saiPendingIntent
+                            )
+                        }
+
+                        notificationManager.notify(app.packageName.hashCode(), notifBuilder.build())
                     } else {
                         Toast.makeText(context, "Saved: ${destFile.absolutePath}", Toast.LENGTH_LONG).show()
                     }
@@ -583,7 +609,8 @@ data class AppInfo(
     val targetSdk: Int,
     val lastUsed: Long,
     val lastUpdated: Long,
-    val installerStore: String?
+    val installerStore: String?,
+    val isSplitApk: Boolean = false  // True when Play Store installed as App Bundle (multiple APK splits)
 )
 
 @Composable
@@ -1364,7 +1391,33 @@ fun AppActionDialog(
                     Spacer(Modifier.height(8.dp))
                 }
                 
-                // Surgical Action Buttons Row 2: LAUNCH & EXTRACT
+                // Split APK warning banner
+                if (app.isSplitApk) {
+                    Spacer(Modifier.height(4.dp))
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = Color(0xFFFF8C00).copy(alpha = 0.1f),
+                        shape = RoundedCornerShape(10.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF8C00).copy(alpha = 0.4f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Info, null, tint = Color(0xFFFF8C00), modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                "Play Store App Bundle — backup requires SAI to install",
+                                fontSize = 10.sp,
+                                color = Color(0xFFFF8C00),
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+
+                // Surgical Action Buttons Row 2: LAUNCH & EXTRACT/BACKUP
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = onLaunch,
@@ -1379,14 +1432,25 @@ fun AppActionDialog(
                     Button(
                         onClick = onExtract,
                         modifier = Modifier.weight(1.2f).height(48.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = LogoPurple.copy(alpha = 0.1f), contentColor = LogoPurple),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (app.isSplitApk) Color(0xFFFF8C00).copy(alpha = 0.1f) else LogoPurple.copy(alpha = 0.1f),
+                            contentColor = if (app.isSplitApk) Color(0xFFFF8C00) else LogoPurple
+                        ),
                         shape = RoundedCornerShape(12.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, LogoPurple.copy(alpha = 0.2f)),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (app.isSplitApk) Color(0xFFFF8C00).copy(alpha = 0.3f) else LogoPurple.copy(alpha = 0.2f)
+                        ),
                         contentPadding = PaddingValues(horizontal = 8.dp)
                     ) {
-                        Icon(Icons.Default.CloudDownload, null, Modifier.size(18.dp))
+                        Icon(if (app.isSplitApk) Icons.Default.FolderZip else Icons.Default.CloudDownload, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("EXTRACT APK", fontSize = 10.sp, fontWeight = FontWeight.Black, maxLines = 1)
+                        Text(
+                            if (app.isSplitApk) "BACKUP BUNDLE" else "EXTRACT APK",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Black,
+                            maxLines = 1
+                        )
                     }
                 }
                 
