@@ -1,3 +1,113 @@
 <resources>
     <string name="app_name">Uninstaller</string>
+    <string name="content_refresh">Refresh</string>
+    <string name="content_toggle_theme">Toggle Theme</string>
+    <string name="content_navigate">Navigate</string>
+    
+    <string name="search_hint">Search…</string>
+    <string name="sort_by">Sort By</string>
+    <string name="sort_name">Name</string>
+    <string name="sort_size">Size</string>
+    <string name="sort_date">Date</string>
+    <string name="sort_date_used">Date (Used)</string>
+    <string name="sort_asc">Ascending</string>
+    <string name="sort_desc">Descending</string>
+    
+    <string name="storage_critical">CRITICAL: %1$s / %2$s</string>
+    <string name="storage_free">Free: %1$s / %2$s</string>
+    <string name="storage_free_percent">%1$d%% free</string>
+    <string name="apps_count">Apps: %1$d</string>
+    <string name="tab_user">User (%1$d)</string>
+    <string name="tab_system">System (%1$d)</string>
+    
+    <string name="action_surgical_clean">Surgical Clean</string>
+    <string name="items_selected_count">%1$d Items Selected</string>
+    <string name="reclaiming_space">Reclaiming %1$s</string>
+    <string name="action_uninstall">UNINSTALL</string>
+    
+    <string name="action_close">CLOSE</string>
+    <string name="info_version">VERSION</string>
+    <string name="info_size">SIZE</string>
+    <string name="info_target">TARGET</string>
+    <string name="info_last_used">LAST USED</string>
+    <string name="info_installed">INSTALLED</string>
+    <string name="info_updated">UPDATED</string>
+    <string name="info_source">INSTALLER SOURCE</string>
+    <string name="source_unknown">Sideloaded / Unknown</string>
+    <string name="source_play">Google Play</string>
+    <string name="source_amazon">Amazon Store</string>
+    <string name="bundle_warning">Play Store App Bundle — backs up as a .apks bundle package</string>
+    
+    <string name="action_launch">LAUNCH</string>
+    <string name="action_extract_apks">EXTRACT .APKS</string>
+    <string name="action_extract_apk">EXTRACT APK</string>
+    <string name="action_share">SHARE</string>
+    
+    <string name="state_analyzing">ANALYZING </string>
+    <string name="state_system">SYSTEM…</string>
+    <string name="state_no_apps">NO APPS </string>
+    <string name="state_found">FOUND</string>
+    <string name="state_scan_retry">Try scanning again or check permissions.</string>
+    <string name="action_scan_again">SCAN AGAIN</string>
+    
+    <string name="title_surgical">SURGICAL </string>
+    <string name="title_clean">CLEAN</string>
+    <string name="status_complete">COMPLETE</string>
+
+    <string name="title_analysis">ANALYSIS </string>
+    <string name="title_result">RESULT</string>
+    <string name="cleanup_ready">Surgical cleanup ready to reclaim</string>
+    <string name="cleanup_zones">from %1$d cached zones</string>
+    <string name="action_clean_now">CLEAN NOW</string>
+    <string name="action_discard">DISCARD</string>
+    <string name="title_surgery">SURGERY </string>
+    <string name="device_optimized">Your device is now optimized.</string>
+    <string name="action_done">DONE</string>
+
+    <string name="subtitle_precision">Surgical precision for your apps</string>
+    
+    <string name="group_permission_hub">Permission Hub</string>
+    <string name="item_usage_intelligence">Usage Intelligence</string>
+    <string name="desc_usage_intelligence">Enables \'Last Used\' tracking for apps.</string>
+    <string name="item_surgical_storage">Surgical Storage Access</string>
+    <string name="desc_surgical_storage">Required for Junk &amp; APK Extraction.</string>
+    <string name="item_push_notif">Push Notifications</string>
+    <string name="desc_push_notif">Storage alerts &amp; APK extraction notifications.</string>
+
+    <string name="group_automation">Surgical Automation</string>
+    <string name="item_deep_scan">Deep Scan on Launch</string>
+    <string name="item_apk_path">APK Backup Path</string>
+
+    <string name="group_storage_intel">Storage Intelligence</string>
+    <string name="item_alert_threshold">Alert Threshold</string>
+    <string name="desc_alert_threshold">Triggers a visual alert when your system storage exceeds this limit.</string>
+    <string name="item_storage_alerts">Storage Alert Notifications</string>
+
+    <string name="group_support">Support &amp; Feedback</string>
+    <string name="item_more_apps">More Apps</string>
+    <string name="item_rate">Rate This App</string>
+    <string name="item_feedback">Send Feedback</string>
+    <string name="item_share">Share App</string>
+
+    <string name="group_legal">Legal</string>
+    <string name="item_privacy">Privacy Policy</string>
+    
+    <string name="permission_allowed">Allowed</string>
+    <string name="state_surgical_scan">Surgical Scan…</string>
+    <string name="state_surgical_removal">Surgical Removal: %1$s…</string>
+    <string name="notif_channel_name">APK Extraction</string>
+    <string name="notif_channel_desc">Notifies when an APK backup is complete</string>
+    <string name="notif_title_extracted">Extracted %1$s</string>
+    <string name="notif_desc_extracted">Saved to %1$s</string>
+    <string name="toast_extracted">Extracted to: %1$s</string>
+    <string name="notif_bundle_complete">📦 Bundle Backup Complete</string>
+    <string name="notif_apk_complete">✅ APK Extraction Complete</string>
+    <string name="notif_bundle_summary">%1$s saved as a .apks bundle package</string>
+    <string name="notif_apk_summary">%1$s saved as .apk — tap file to install</string>
+    <string name="notif_bundle_big">%1$s backed up as an App Bundle (.apks). This contains multiple split APKs.\n\nSaved to:\n%2$s</string>
+    <string name="notif_apk_big">%1$s backed up successfully.\n\nSaved to:\n%2$s</string>
+    <string name="state_analyzing_buffers">Analyzing system buffers…</string>
+    <string name="toast_extract_fail">Extraction Failed: %1$s</string>
+    <string name="permission_allow">Allow</string>
+    <string name="info_never">Never</string>
 </resources>

@@ -55,6 +55,7 @@ import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -272,7 +273,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startDeepClean() {
         viewModelScope.launch(Dispatchers.IO) {
-            _uiState.emit(AppUiState.Scanning(0f, "Analyzing system buffers..."))
+            val app = getApplication<Application>()
+            _uiState.emit(AppUiState.Scanning(0f, app.getString(R.string.state_analyzing_buffers)))
             
             val junkFiles = mutableListOf<File>()
             var totalBytes = 0L
@@ -320,7 +322,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     
                     apps.forEachIndexed { index, appDir ->
                         if (index % 30 == 0) {
-                            _uiState.emit(AppUiState.Scanning(0.4f + (index.toFloat()/totalApps.coerceAtLeast(1))*0.5f, "Surgical Scan..."))
+                            _uiState.emit(AppUiState.Scanning(0.4f + (index.toFloat()/totalApps.coerceAtLeast(1))*0.5f, getApplication<Application>().getString(R.string.state_surgical_scan)))
                         }
                         
                         if (!installedPackageNames.contains(appDir.name)) {
@@ -351,8 +353,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             haptics?.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
             var spaceReclaimed = 0L
             val total = discoveredJunk.size
+            val appCtx = getApplication<Application>()
             discoveredJunk.forEachIndexed { index, file ->
-                _uiState.emit(AppUiState.Scanning(index.toFloat() / total, "Surgical Removal: ${file.name}..."))
+                _uiState.emit(AppUiState.Scanning(index.toFloat() / total, appCtx.getString(R.string.state_surgical_removal, file.name)))
                 try {
                     val size = if (file.isDirectory) calculateFolderSize(file) else file.length()
                     if (file.isDirectory) file.deleteRecursively() else file.delete()
@@ -598,18 +601,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     if (canPostNotification) {
                         val notifBuilder = androidx.core.app.NotificationCompat.Builder(context, channelId)
                             .setSmallIcon(android.R.drawable.stat_sys_download_done)
-                            .setContentTitle(if (isSplit) "📦 Bundle Backup Complete" else "✅ APK Extraction Complete")
+                            .setContentTitle(if (isSplit) context.getString(R.string.notif_bundle_complete) else context.getString(R.string.notif_apk_complete))
                             .setContentText(
-                                if (isSplit) "${app.name} saved as a .apks bundle package"
-                                else "${app.name} saved as .apk — tap file to install"
+                                if (isSplit) context.getString(R.string.notif_bundle_summary, app.name)
+                                else context.getString(R.string.notif_apk_summary, app.name)
                             )
                             .setStyle(
                                 androidx.core.app.NotificationCompat.BigTextStyle()
                                     .bigText(
                                         if (isSplit)
-                                            "${app.name} backed up as an App Bundle (.apks). This contains multiple split APKs.\n\nSaved to:\n${destFile.absolutePath}"
+                                            context.getString(R.string.notif_bundle_big, app.name, destFile.absolutePath)
                                         else
-                                            "${app.name} backed up successfully.\n\nSaved to:\n${destFile.absolutePath}"
+                                            context.getString(R.string.notif_apk_big, app.name, destFile.absolutePath)
                                     )
                             )
                             .setPriority(androidx.core.app.NotificationCompat.PRIORITY_DEFAULT)
@@ -617,12 +620,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
                         notificationManager.notify(app.packageName.hashCode(), notifBuilder.build())
                     } else {
-                        Toast.makeText(context, "Saved: ${destFile.absolutePath}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, context.getString(R.string.toast_extracted, destFile.absolutePath), Toast.LENGTH_LONG).show()
                     }
                 }
             } catch (e: Exception) {
+                val appCtx = getApplication<Application>()
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(getApplication(), "Extraction failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(appCtx, appCtx.getString(R.string.toast_extract_fail, (e.message ?: "Unknown Error")), Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -764,8 +768,8 @@ fun LoadingScreen() {
             )
             Spacer(modifier = Modifier.height(24.dp))
             Row {
-                Text("ANALYZING ", fontWeight = FontWeight.Black, color = LogoPurple)
-                Text("SYSTEM...", fontWeight = FontWeight.Black, color = EmeraldGreen)
+                Text(stringResource(R.string.state_analyzing), fontWeight = FontWeight.Black, color = LogoPurple)
+                Text(stringResource(R.string.state_system), fontWeight = FontWeight.Black, color = EmeraldGreen)
             }
         }
     }
@@ -778,17 +782,17 @@ fun EmptyStateScreen(onRetry: () -> Unit) {
             Icon(Icons.Default.SearchOff, null, Modifier.size(80.dp), tint = EmeraldGreen.copy(alpha = 0.3f))
             Spacer(modifier = Modifier.height(24.dp))
             Row {
-                Text("NO APPS ", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black, color = LogoPurple)
-                Text("FOUND", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black, color = EmeraldGreen)
+                Text(stringResource(R.string.state_no_apps), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black, color = LogoPurple)
+                Text(stringResource(R.string.state_found), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black, color = EmeraldGreen)
             }
-            Text("Try scanning again or check permissions.", textAlign = TextAlign.Center, color = Color.Gray)
+            Text(stringResource(R.string.state_scan_retry), textAlign = TextAlign.Center, color = Color.Gray)
             Spacer(modifier = Modifier.height(32.dp))
             Button(
                 onClick = onRetry, 
                 colors = ButtonDefaults.buttonColors(containerColor = LogoPurple),
                 shape = RoundedCornerShape(16.dp)
             ) {
-                Text("SCAN AGAIN", color = Color.White, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.action_scan_again), color = Color.White, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -810,7 +814,7 @@ fun UninstallerTopBar(
                 IconButton(onClick = onRefresh) {
                     Icon(
                         imageVector = Icons.Default.Refresh,
-                        contentDescription = "Refresh",
+                        contentDescription = stringResource(R.string.content_refresh),
                         tint = EmeraldGreen
                     )
                 }
@@ -869,14 +873,14 @@ fun UninstallerTopBar(
             IconButton(onClick = onThemeToggle) {
                 Icon(
                     imageVector = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
-                    contentDescription = "Toggle Theme",
+                    contentDescription = stringResource(R.string.content_toggle_theme),
                     tint = if (isDarkTheme) Color.White else Charcoal
                 )
             }
             IconButton(onClick = onSettingsClick) {
                 Icon(
                     imageVector = if (!showSettings) Icons.Default.Home else Icons.Default.Settings,
-                    contentDescription = "Navigate",
+                    contentDescription = stringResource(R.string.content_navigate),
                     tint = LogoPurple
                 )
             }
@@ -973,7 +977,7 @@ fun HomeScreen(
                             Icon(Icons.Default.Search, null, tint = EmeraldGreen, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(5.dp))
                             Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                                if (searchQuery.isEmpty()) Text("Search...", fontSize = 14.sp, color = Color.Gray)
+                                if (searchQuery.isEmpty()) Text(stringResource(R.string.search_hint), fontSize = 14.sp, color = Color.Gray)
                                 innerTextField()
                             }
                         }
@@ -992,7 +996,7 @@ fun HomeScreen(
                     }
 
                     DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
-                        Text("Sort By", modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text(stringResource(R.string.sort_by), modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         listOf("Name", "Size", "Date", "Date (Used)").forEach { option ->
                             DropdownMenuItem(
                                 text = { Text(option) },
@@ -1013,7 +1017,7 @@ fun HomeScreen(
                         }
                         HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                         DropdownMenuItem(
-                            text = { Text(if (isAscending) "Ascending" else "Descending") },
+                            text = { Text(if (isAscending) stringResource(R.string.sort_asc) else stringResource(R.string.sort_desc)) },
                             leadingIcon = { Icon(if (isAscending) Icons.Default.VerticalAlignTop else Icons.Default.VerticalAlignBottom, null) },
                             onClick = { onSortChange(sortBy, !isAscending); showSortMenu = false }
                         )
@@ -1046,7 +1050,7 @@ fun HomeScreen(
                             Spacer(Modifier.width(6.dp))
                         }
                         Text(
-                            text = if (isCritical) "CRITICAL: ${storage.free} / ${storage.total}" else "Free: ${storage.free} / ${storage.total}",
+                            text = if (isCritical) stringResource(R.string.storage_critical, storage.free, storage.total) else stringResource(R.string.storage_free, storage.free, storage.total),
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = if (isCritical) Color.Red else MaterialTheme.colorScheme.onSurface
@@ -1057,7 +1061,7 @@ fun HomeScreen(
                             shape = RoundedCornerShape(4.dp)
                         ) {
                             Text(
-                                "$freePercent% free",
+                                stringResource(R.string.storage_free_percent, freePercent),
                                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Black,
@@ -1066,7 +1070,7 @@ fun HomeScreen(
                         }
                     }
                     Text(
-                        text = "Apps: ${apps.size}",
+                        text = stringResource(R.string.apps_count, apps.size),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = if (isCritical) Color.Red else EmeraldGreen
@@ -1111,7 +1115,9 @@ fun HomeScreen(
                     val userCount = if (searchQuery.isEmpty()) apps.count { !it.isSystem } else userApps.size
                     val systemCount = if (searchQuery.isEmpty()) apps.count { it.isSystem } else systemApps.size
                     
-                    listOf("User ($userCount)", "System ($systemCount)").forEachIndexed { index, title ->
+                    val userTabStr = stringResource(R.string.tab_user, userCount)
+                    val systemTabStr = stringResource(R.string.tab_system, systemCount)
+                    listOf(userTabStr, systemTabStr).forEachIndexed { index, title ->
                         val isSelected = pagerState.currentPage == index
                         Box(
                             modifier = Modifier
@@ -1182,7 +1188,7 @@ fun HomeScreen(
                 Row(modifier = Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.AutoDelete, null, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Surgical Clean", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.action_surgical_clean), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -1354,7 +1360,7 @@ fun AppActionDialog(
         onDismissRequest = onDismiss,
         confirmButton = {},
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("CLOSE", color = Color.Gray, fontWeight = FontWeight.Black) }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_close), color = Color.Gray, fontWeight = FontWeight.Black) }
         },
         title = {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
@@ -1399,30 +1405,31 @@ fun AppActionDialog(
                 val sdf = java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.getDefault())
                 val installDate = sdf.format(java.util.Date(app.installedDate))
                 val updateDate = sdf.format(java.util.Date(app.lastUpdated))
-                val lastUsedDate = if (app.lastUsed == 0L) "Never" else sdf.format(java.util.Date(app.lastUsed))
+                val neverStr = stringResource(R.string.info_never)
+                val lastUsedDate = if (app.lastUsed == 0L) neverStr else sdf.format(java.util.Date(app.lastUsed))
                 val source = when {
-                    app.installerStore == null -> "Sideloaded / Unknown"
-                    app.installerStore.contains("vending") || app.installerStore.contains("play") -> "Google Play"
-                    app.installerStore.contains("amazon") -> "Amazon Store"
+                    app.installerStore == null -> stringResource(R.string.source_unknown)
+                    app.installerStore.contains("vending") || app.installerStore.contains("play") -> stringResource(R.string.source_play)
+                    app.installerStore.contains("amazon") -> stringResource(R.string.source_amazon)
                     else -> app.installerStore
                 }
                 
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    InfoBox(Modifier.weight(1f), "VERSION", app.version, Icons.Default.Info)
-                    InfoBox(Modifier.weight(1f), "SIZE", app.size, Icons.Default.SdStorage)
+                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_version), app.version, Icons.Default.Info)
+                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_size), app.size, Icons.Default.SdStorage)
                 }
                 Spacer(Modifier.height(8.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    InfoBox(Modifier.weight(1f), "TARGET", "API ${app.targetSdk}", Icons.Default.DataObject)
-                    InfoBox(Modifier.weight(1f), "LAST USED", lastUsedDate, Icons.Default.History)
+                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_target), "API ${app.targetSdk}", Icons.Default.DataObject)
+                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_last_used), lastUsedDate, Icons.Default.History)
                 }
                 Spacer(Modifier.height(8.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    InfoBox(Modifier.weight(1f), "INSTALLED", installDate, Icons.Default.Event)
-                    InfoBox(Modifier.weight(1f), "UPDATED", updateDate, Icons.Default.Update)
+                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_installed), installDate, Icons.Default.Event)
+                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_updated), updateDate, Icons.Default.Update)
                 }
                 Spacer(Modifier.height(8.dp))
-                InfoBox(Modifier.fillMaxWidth(), "INSTALLER SOURCE", source, Icons.Default.Source)
+                InfoBox(Modifier.fillMaxWidth(), stringResource(R.string.info_source), source, Icons.Default.Source)
                 
                 Spacer(modifier = Modifier.height(20.dp))
                 
@@ -1437,7 +1444,7 @@ fun AppActionDialog(
                     ) {
                         Icon(Icons.Default.Delete, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("UNINSTALL", fontSize = 12.sp, fontWeight = FontWeight.Black)
+                        Text(stringResource(R.string.action_uninstall), fontSize = 12.sp, fontWeight = FontWeight.Black)
                     }
                     Spacer(Modifier.height(8.dp))
                 }
@@ -1458,7 +1465,7 @@ fun AppActionDialog(
                             Icon(Icons.Default.Info, null, tint = Color(0xFFFF8C00), modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(6.dp))
                             Text(
-                                "Play Store App Bundle — backs up as a .apks bundle package",
+                                stringResource(R.string.bundle_warning),
                                 fontSize = 10.sp,
                                 color = Color(0xFFFF8C00),
                                 fontWeight = FontWeight.Medium
@@ -1478,7 +1485,7 @@ fun AppActionDialog(
                     ) {
                         Icon(Icons.Default.Launch, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("LAUNCH", fontSize = 11.sp, fontWeight = FontWeight.Black)
+                        Text(stringResource(R.string.action_launch), fontSize = 11.sp, fontWeight = FontWeight.Black)
                     }
                     Button(
                         onClick = onExtract,
@@ -1497,7 +1504,7 @@ fun AppActionDialog(
                         Icon(if (app.isSplitApk) Icons.Default.FolderZip else Icons.Default.CloudDownload, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(4.dp))
                         Text(
-                            if (app.isSplitApk) "EXTRACT .APKS" else "EXTRACT APK",
+                            if (app.isSplitApk) stringResource(R.string.action_extract_apks) else stringResource(R.string.action_extract_apk),
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Black,
                             maxLines = 1
@@ -1517,7 +1524,7 @@ fun AppActionDialog(
                     ) {
                         Icon(Icons.Default.Share, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("SHARE", fontSize = 11.sp, fontWeight = FontWeight.Black)
+                        Text(stringResource(R.string.action_share), fontSize = 11.sp, fontWeight = FontWeight.Black)
                     }
                     Button(
                         onClick = onDetails,
@@ -1588,10 +1595,10 @@ fun BulkActionBar(count: Int, reclaimedSpace: String, onUninstall: () -> Unit, o
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = isAllSelected, onCheckedChange = { onSelectAll() }, colors = CheckboxDefaults.colors(checkedColor = EmeraldGreen))
-                    Text(text = "$count Items Selected", fontWeight = FontWeight.ExtraBold, color = LogoPurple)
+                    Text(text = stringResource(R.string.items_selected_count, count), fontWeight = FontWeight.ExtraBold, color = LogoPurple)
                 }
                 Text(
-                    text = "Reclaiming $reclaimedSpace",
+                    text = stringResource(R.string.reclaiming_space, reclaimedSpace),
                     style = MaterialTheme.typography.labelSmall,
                     color = EmeraldGreen,
                     fontWeight = FontWeight.Bold,
@@ -1605,7 +1612,7 @@ fun BulkActionBar(count: Int, reclaimedSpace: String, onUninstall: () -> Unit, o
                 shape = RoundedCornerShape(16.dp),
                 elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
             ) {
-                Text("Uninstall", fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.action_uninstall), fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -1759,7 +1766,7 @@ fun SettingsScreen(viewModel: AppViewModel) {
                         Text("UNINSTALLE", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = LogoPurple)
                         Text("R", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = EmeraldGreen)
                     }
-                    Text("Surgical precision for your apps", fontStyle = androidx.compose.ui.text.font.FontStyle.Italic, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.subtitle_precision), fontStyle = androidx.compose.ui.text.font.FontStyle.Italic, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(modifier = Modifier.height(12.dp))
                     HorizontalDivider(color = EmeraldGreen.copy(alpha = 0.1f), thickness = 1.dp, modifier = Modifier.width(100.dp))
                     Spacer(modifier = Modifier.height(12.dp))
@@ -1769,10 +1776,10 @@ fun SettingsScreen(viewModel: AppViewModel) {
         }
 
         item {
-            SettingsGroup("Permission Hub") {
+            SettingsGroup(stringResource(R.string.group_permission_hub)) {
                 PermissionHubItem(
-                    label = "Usage Intelligence",
-                    desc = "Enables 'Last Used' tracking for apps.",
+                    label = stringResource(R.string.item_usage_intelligence),
+                    desc = stringResource(R.string.desc_usage_intelligence),
                     isGranted = hasUsageAccess,
                     onClick = {
                         try {
@@ -1784,8 +1791,8 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 )
                 HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
                 PermissionHubItem(
-                    label = "Surgical Storage Access",
-                    desc = "Required for Junk & APK Extraction.",
+                    label = stringResource(R.string.item_surgical_storage),
+                    desc = stringResource(R.string.desc_surgical_storage),
                     isGranted = hasFileAccess,
                     onClick = {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -1808,8 +1815,8 @@ fun SettingsScreen(viewModel: AppViewModel) {
                         .edit().putBoolean("notif_perm_asked", true).apply()
                 }
                 PermissionHubItem(
-                    label = "Push Notifications",
-                    desc = "Storage alerts & APK extraction notifications.",
+                    label = stringResource(R.string.item_push_notif),
+                    desc = stringResource(R.string.desc_push_notif),
                     isGranted = hasNotificationAccess,
                     onClick = {
                         // Helper: open app notification settings (always works, even when permanently denied)
@@ -1851,9 +1858,9 @@ fun SettingsScreen(viewModel: AppViewModel) {
         }
 
         item {
-            SettingsGroup("Surgical Automation") {
+            SettingsGroup(stringResource(R.string.group_automation)) {
                 SettingsToggle(
-                    label = "Deep Scan on Launch",
+                    label = stringResource(R.string.item_deep_scan),
                     checked = scanOnLaunch,
                     onCheckedChange = { viewModel.toggleScanOnLaunch(it) }
                 )
@@ -1893,7 +1900,7 @@ fun SettingsScreen(viewModel: AppViewModel) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.FolderOpen, null, tint = EmeraldGreen, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("APK Backup Path", fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                            Text(stringResource(R.string.item_apk_path), fontWeight = FontWeight.Medium, fontSize = 14.sp)
                         }
                     }
                     Spacer(Modifier.height(8.dp))
@@ -1917,10 +1924,10 @@ fun SettingsScreen(viewModel: AppViewModel) {
         }
 
         item {
-            SettingsGroup("Storage Intelligence") {
+            SettingsGroup(stringResource(R.string.group_storage_intel)) {
                 Column(Modifier.padding(18.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Alert Threshold", fontWeight = FontWeight.Medium)
+                        Text(stringResource(R.string.item_alert_threshold), fontWeight = FontWeight.Medium)
                         Text("${(storageThreshold * 100).toInt()}%", color = EmeraldGreen, fontWeight = FontWeight.Black)
                     }
                     Slider(
@@ -1934,7 +1941,7 @@ fun SettingsScreen(viewModel: AppViewModel) {
                         )
                     )
                     Text(
-                        "Triggers a visual alert when your system storage exceeds this limit.",
+                        stringResource(R.string.desc_alert_threshold),
                         fontSize = 10.sp,
                         color = Color.Gray,
                         fontStyle = FontStyle.Italic
@@ -1960,7 +1967,7 @@ fun SettingsScreen(viewModel: AppViewModel) {
                     }
                 }
                 SettingsToggle(
-                    label = "Storage Alert Notifications",
+                    label = stringResource(R.string.item_storage_alerts),
                     checked = storageAlertsEnabled,
                     onCheckedChange = { enabled ->
                         if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -1994,10 +2001,10 @@ fun SettingsScreen(viewModel: AppViewModel) {
         }
 
         item { 
-            SettingsGroup("Support & Feedback") {
+            SettingsGroup(stringResource(R.string.group_support)) {
                 SettingsItem(
                     icon = Icons.Default.Apps,
-                    label = "More Apps",
+                    label = stringResource(R.string.item_more_apps),
                     onClick = {
                         val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/developer?id=ZeeTech+Solutions+Pvt.+Ltd.&hl=en"))
                         try {
@@ -2008,7 +2015,7 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
                 SettingsItem(
                     icon = Icons.Default.Star,
-                    label = "Rate This App",
+                    label = stringResource(R.string.item_rate),
                     onClick = {
                         try {
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/console/u/0/developers/8381881514749219665/app/4976725838031557021/main-store-listing"))
@@ -2019,7 +2026,7 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
                 SettingsItem(
                     icon = Icons.Default.Email,
-                    label = "Send Feedback",
+                    label = stringResource(R.string.item_feedback),
                     onClick = {
                         val intent = Intent(Intent.ACTION_SENDTO).apply {
                             data = Uri.parse("mailto:muzeeali8@gmail.com")
@@ -2033,7 +2040,7 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
                 SettingsItem(
                     icon = Icons.Default.Share,
-                    label = "Share App",
+                    label = stringResource(R.string.item_share),
                     onClick = {
                         val shareIntent = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
@@ -2047,10 +2054,10 @@ fun SettingsScreen(viewModel: AppViewModel) {
         }
 
         item {
-            SettingsGroup("Legal") {
+            SettingsGroup(stringResource(R.string.group_legal)) {
                 SettingsItem(
                     icon = Icons.Default.PrivacyTip,
-                    label = "Privacy Policy",
+                    label = stringResource(R.string.item_privacy),
                     onClick = {
                         val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://zeetechsolutionspvt.blogspot.com/2026/02/uninstaller.html"))
                         context.startActivity(intent)
@@ -2133,7 +2140,7 @@ fun PermissionHubItem(label: String, desc: String, isGranted: Boolean, onClick: 
             shape = CircleShape
         ) {
             Text(
-                text = if (isGranted) "Allowed" else "Allow",
+                text = if (isGranted) stringResource(R.string.permission_allowed) else stringResource(R.string.permission_allow),
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Black,
