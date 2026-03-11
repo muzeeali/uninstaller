@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import coil.compose.AsyncImage
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -169,20 +170,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (::viewModel.isInitialized) {
-            viewModel.reloadIconsIfNeeded()
-        }
+        // Icons are now preserved on disk and handled by Coil.
     }
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        // Purge icons if the app is placed in background (UI_HIDDEN = 20) or if running critically low on RAM (15)
-        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) {
-            if (::viewModel.isInitialized) {
-                // Instantly purge massive image dictionary if the weak Android system sounds the memory alarm.
-                viewModel.clearIconCache()
-            }
-        }
+        // Icons are now stored on disk and managed by Coil, so no RAM clearing needed here.
     }
 }
 
@@ -190,36 +183,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow<AppUiState>(AppUiState.Loading)
     val uiState: StateFlow<AppUiState> = _uiState
 
-    // Icon cache: loaded lazily after the list is displayed
-    private val _iconCache = MutableStateFlow<Map<String, Drawable>>(emptyMap())
-    val iconCache: StateFlow<Map<String, Drawable>> = _iconCache
+    // Set of package names whose icons are currently cached on disk
+    private val _cachedIcons = MutableStateFlow<Set<String>>(emptySet())
+    val cachedIcons: StateFlow<Set<String>> = _cachedIcons
 
     // Cached success state — avoids reloading when navigating back from a popup
     private var cachedSuccessState: AppUiState.Success? = null
-
-    fun clearIconCache() {
-        _iconCache.value = emptyMap()
-    }
-
-    fun reloadIconsIfNeeded() {
-        if (_iconCache.value.isEmpty() && cachedSuccessState != null) {
-            viewModelScope.launch(Dispatchers.IO) {
-                val pm = getApplication<Application>().packageManager
-                @Suppress("DEPRECATION")
-                val packages = pm.getInstalledPackages(0)
-                val newCache = mutableMapOf<String, Drawable>()
-                packages.chunked(30).forEach { chunk ->
-                    chunk.forEach { pkgInfo ->
-                        val appInfo = pkgInfo.applicationInfo ?: return@forEach
-                        try {
-                            newCache[appInfo.packageName] = pm.getApplicationIcon(appInfo)
-                        } catch (e: Exception) { /* skip bad icon */ }
-                    }
-                    _iconCache.value = newCache.toMap()
-                }
-            }
-        }
-    }
 
     private val prefs = application.getSharedPreferences("surgical_uninstaller_prefs", Context.MODE_PRIVATE)
     
@@ -477,7 +446,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     installedDate = pkgInfo.firstInstallTime,
                     size = formatSize(sizeBytes),
                     sizeBytes = sizeBytes,
-                    icon = null,           // Loaded in background below
                     isSystem = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0,
                     targetSdk = appInfo.targetSdkVersion,
                     lastUsed = usageMap[pkgName]?.lastTimeUsed ?: 0L,
@@ -512,16 +480,41 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.emit(finalSuccessState ?: AppUiState.Empty)
 
             // Load icons lazily in batches — UI is already visible and interactive
-            val newCache = mutableMapOf<String, Drawable>()
-            packages.chunked(30).forEach { chunk ->
-                chunk.forEach { pkgInfo ->
-                    val appInfo = pkgInfo.applicationInfo ?: return@forEach
-                    try {
-                        newCache[appInfo.packageName] = pm.getApplicationIcon(appInfo)
-                    } catch (e: Exception) { /* skip bad icon */ }
+            val iconsDir = File(context.cacheDir, "icons_cache")
+            if (!iconsDir.exists()) iconsDir.mkdirs()
+
+            // Check what's already on disk to avoid re-emitting flow for every file
+            val existingFiles = iconsDir.listFiles()?.map { it.nameWithoutExtension }?.toSet() ?: emptySet()
+            _cachedIcons.value = existingFiles
+
+            viewModelScope.launch(Dispatchers.IO) {
+                val newCachedPackages = _cachedIcons.value.toMutableSet()
+                packages.chunked(30).forEach { chunk ->
+                    var changed = false
+                    chunk.forEach { pkgInfo ->
+                        val appInfo = pkgInfo.applicationInfo ?: return@forEach
+                        val pkgName = appInfo.packageName
+                        val iconFile = File(iconsDir, "$pkgName.png")
+                        
+                        // If file doesn't exist or is older than the app's latest update, save it
+                        if (!iconFile.exists() || iconFile.lastModified() < pkgInfo.lastUpdateTime) {
+                            try {
+                                val bitmap = pm.getApplicationIcon(appInfo).toBitmap()
+                                FileOutputStream(iconFile).use { out ->
+                                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                                }
+                                newCachedPackages.add(pkgName)
+                                changed = true
+                            } catch (e: Exception) { /* skip bad icon */ }
+                        } else if (!newCachedPackages.contains(pkgName)) {
+                            newCachedPackages.add(pkgName)
+                            changed = true
+                        }
+                    }
+                    if (changed) {
+                        _cachedIcons.value = newCachedPackages.toSet()
+                    }
                 }
-                // Publish batch so icons appear progressively
-                _iconCache.value = newCache.toMap()
             }
         }
     }
@@ -666,7 +659,6 @@ data class AppInfo(
     val installedDate: Long,
     val size: String,
     val sizeBytes: Long,
-    val icon: Drawable?,          // Null until lazy-loaded into iconCache
     val isSystem: Boolean,
     val targetSdk: Int,
     val lastUsed: Long,
@@ -724,13 +716,13 @@ fun UninstallerApp(
                     val sortBy by viewModel.sortBy.collectAsState()
                     val isAscending by viewModel.isAscending.collectAsState()
                     val storageThreshold by viewModel.storageThreshold.collectAsState()
-                    val iconCache by viewModel.iconCache.collectAsState()
+                    val cachedIcons by viewModel.cachedIcons.collectAsState()
 
                     if (currentScreen == "home") {
                         HomeScreen(
                             apps = state.apps,
                             storage = state.storage,
-                            iconCache = iconCache,
+                            cachedIcons = cachedIcons,
                             isRefreshing = currentUiState is AppUiState.Loading && state.apps.isNotEmpty(),
                             sortBy = sortBy,
                             isAscending = isAscending,
@@ -898,7 +890,7 @@ fun UninstallerTopBar(
 fun HomeScreen(
     apps: List<AppInfo>, 
     storage: StorageInfo,
-    iconCache: Map<String, Drawable>,
+    cachedIcons: Set<String>,
     isRefreshing: Boolean,
     sortBy: String,
     isAscending: Boolean,
@@ -1165,7 +1157,7 @@ fun HomeScreen(
                             val isSelected = selectedApps.contains(app)
                             AppRow(
                                 app = app,
-                                icon = iconCache[app.packageName],
+                                isIconCached = cachedIcons.contains(app.packageName),
                                 isSelected = isSelected,
                                 onToggle = { if (isSelected) selectedApps.remove(app) else selectedApps.add(app) },
                                 onMenuClick = { appActionToShow = app }
@@ -1220,7 +1212,7 @@ fun HomeScreen(
         appActionToShow?.let { app ->
             AppActionDialog(
                 app = app,
-                icon = iconCache[app.packageName],
+                isIconCached = cachedIcons.contains(app.packageName),
                 onDismiss = { appActionToShow = null },
                 onUninstall = { 
                     onUninstallRequest(app.packageName)
@@ -1260,8 +1252,9 @@ fun HomeScreen(
 }
 
 @Composable
-fun AppRow(app: AppInfo, icon: Drawable?, isSelected: Boolean, onToggle: () -> Unit, onMenuClick: () -> Unit) {
+fun AppRow(app: AppInfo, isIconCached: Boolean, isSelected: Boolean, onToggle: () -> Unit, onMenuClick: () -> Unit) {
     val canUninstall = !app.isSystem
+    val context = LocalContext.current
     
     Surface(
         modifier = Modifier
@@ -1297,12 +1290,17 @@ fun AppRow(app: AppInfo, icon: Drawable?, isSelected: Boolean, onToggle: () -> U
             }
 
             // App icon — shows placeholder until lazy icon loads
-            val bitmap = remember(icon) { icon?.toBitmap()?.asImageBitmap() }
-            if (bitmap != null) {
-                Image(
-                    painter = BitmapPainter(bitmap),
+            val iconFile = File(context.cacheDir, "icons_cache/${app.packageName}.png")
+            
+            if (isIconCached && iconFile.exists()) {
+                AsyncImage(
+                    model = coil.request.ImageRequest.Builder(context)
+                        .data(iconFile)
+                        .crossfade(true)
+                        .build(),
                     contentDescription = null,
-                    modifier = Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)
+                    modifier = Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
                 )
             } else {
                 Box(
@@ -1344,7 +1342,7 @@ fun AppRow(app: AppInfo, icon: Drawable?, isSelected: Boolean, onToggle: () -> U
 @Composable
 fun AppActionDialog(
     app: AppInfo,
-    icon: Drawable?,
+    isIconCached: Boolean,
     onDismiss: () -> Unit, 
     onUninstall: () -> Unit, 
     onLaunch: () -> Unit, 
@@ -1360,14 +1358,24 @@ fun AppActionDialog(
         },
         title = {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                val bitmap = remember(icon) { icon?.toBitmap()?.asImageBitmap() }
+                val context = LocalContext.current
+                val iconFile = File(context.cacheDir, "icons_cache/${app.packageName}.png")
+                
                 Surface(
                     shape = CircleShape, 
                     border = androidx.compose.foundation.BorderStroke(2.dp, EmeraldGreen.copy(alpha = 0.5f)),
                     shadowElevation = 8.dp
                 ) {
-                    if (bitmap != null) {
-                        Image(BitmapPainter(bitmap), null, Modifier.size(72.dp).padding(8.dp).clip(CircleShape))
+                    if (isIconCached && iconFile.exists()) {
+                        AsyncImage(
+                            model = coil.request.ImageRequest.Builder(context)
+                                .data(iconFile)
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = null,
+                            modifier = Modifier.size(72.dp).padding(8.dp).clip(CircleShape),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                        )
                     } else {
                         Box(
                             modifier = Modifier.size(72.dp).padding(8.dp).clip(CircleShape)
