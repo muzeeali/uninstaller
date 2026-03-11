@@ -167,9 +167,17 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (::viewModel.isInitialized) {
+            viewModel.reloadIconsIfNeeded()
+        }
+    }
+
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+        // Purge icons if the app is placed in background (UI_HIDDEN = 20) or if running critically low on RAM (15)
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) {
             if (::viewModel.isInitialized) {
                 // Instantly purge massive image dictionary if the weak Android system sounds the memory alarm.
                 viewModel.clearIconCache()
@@ -191,6 +199,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearIconCache() {
         _iconCache.value = emptyMap()
+    }
+
+    fun reloadIconsIfNeeded() {
+        if (_iconCache.value.isEmpty() && cachedSuccessState != null) {
+            viewModelScope.launch(Dispatchers.IO) {
+                val pm = getApplication<Application>().packageManager
+                @Suppress("DEPRECATION")
+                val packages = pm.getInstalledPackages(0)
+                val newCache = mutableMapOf<String, Drawable>()
+                packages.chunked(30).forEach { chunk ->
+                    chunk.forEach { pkgInfo ->
+                        val appInfo = pkgInfo.applicationInfo ?: return@forEach
+                        try {
+                            newCache[appInfo.packageName] = pm.getApplicationIcon(appInfo)
+                        } catch (e: Exception) { /* skip bad icon */ }
+                    }
+                    _iconCache.value = newCache.toMap()
+                }
+            }
+        }
     }
 
     private val prefs = application.getSharedPreferences("surgical_uninstaller_prefs", Context.MODE_PRIVATE)
@@ -1001,42 +1029,19 @@ fun HomeScreen(
                 }
             }
 
-            // 2. Storage Alert & Info Row
+            // 2. Storage Alert & Info Row Merged
             val isCritical = storage.percentUsed >= storageThreshold
             
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp)) // Reduced for tighter vertical flow
             
-            if (isCritical) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    color = Color.Red.copy(alpha = 0.1f),
-                    shape = RoundedCornerShape(8.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.Red.copy(alpha = 0.2f))
-                ) {
-                    Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Warning, null, tint = Color.Red, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("STORAGE CRITICAL ", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color.Red)
-                        Surface(color = Color.Red.copy(alpha = 0.15f), shape = RoundedCornerShape(4.dp)) {
-                            Text(
-                                "${(storage.percentUsed * 100).toInt()}% USED",
-                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
-                                fontSize = 9.sp, fontWeight = FontWeight.Black, color = Color.Red
-                            )
-                        }
-                        Spacer(Modifier.width(4.dp))
-                        Text("— Reclaim space now", fontSize = 10.sp, color = Color.Red.copy(alpha = 0.7f))
-                    }
-                }
-            }
-
             val usedPercent = (storage.percentUsed * 100).toInt()
             val freePercent = 100 - usedPercent
 
             Surface(
                 modifier = Modifier.fillMaxWidth().height(36.dp),
-                color = if (isCritical) Color.Red.copy(alpha = 0.05f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
-                shape = RoundedCornerShape(8.dp)
+                color = if (isCritical) Color.Red.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
+                shape = RoundedCornerShape(8.dp),
+                border = if (isCritical) androidx.compose.foundation.BorderStroke(1.dp, Color.Red.copy(alpha = 0.4f)) else null
             ) {
                 Row(
                     Modifier.fillMaxSize().padding(horizontal = 12.dp),
@@ -1044,15 +1049,19 @@ fun HomeScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (isCritical) {
+                            Icon(Icons.Default.Warning, null, tint = Color.Red, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(6.dp))
+                        }
                         Text(
-                            text = "Free: ${storage.free} / ${storage.total}",
+                            text = if (isCritical) "CRITICAL: ${storage.free} / ${storage.total}" else "Free: ${storage.free} / ${storage.total}",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = if (isCritical) Color.Red else MaterialTheme.colorScheme.onSurface
                         )
                         Spacer(Modifier.width(5.dp))
                         Surface(
-                            color = if (isCritical) Color.Red.copy(alpha = 0.12f) else EmeraldGreen.copy(alpha = 0.12f),
+                            color = if (isCritical) Color.Red.copy(alpha = 0.15f) else EmeraldGreen.copy(alpha = 0.12f),
                             shape = RoundedCornerShape(4.dp)
                         ) {
                             Text(
