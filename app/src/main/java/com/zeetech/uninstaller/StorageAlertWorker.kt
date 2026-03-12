@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.Environment
 import android.os.StatFs
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.*
 import java.util.concurrent.TimeUnit
@@ -111,6 +112,7 @@ class StorageAlertWorker(
 
         /** Schedule a periodic check every 6 hours. Safe to call multiple times — replaces existing. */
         fun schedule(context: Context) {
+            Log.d("StorageAlertWorker", "Scheduling storage alert worker")
             val request = PeriodicWorkRequestBuilder<StorageAlertWorker>(6, TimeUnit.HOURS)
                 .setConstraints(Constraints.Builder().build())
                 .build()
