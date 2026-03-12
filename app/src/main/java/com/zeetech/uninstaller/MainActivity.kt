@@ -27,6 +27,8 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -58,6 +60,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -1370,7 +1373,7 @@ fun AppActionDialog(
                 Surface(
                     shape = CircleShape, 
                     border = androidx.compose.foundation.BorderStroke(2.dp, EmeraldGreen.copy(alpha = 0.5f)),
-                    shadowElevation = 8.dp
+                    shadowElevation = 4.dp
                 ) {
                     if (isIconCached && iconFile.exists()) {
                         AsyncImage(
@@ -1379,61 +1382,34 @@ fun AppActionDialog(
                                 .crossfade(true)
                                 .build(),
                             contentDescription = null,
-                            modifier = Modifier.size(72.dp).padding(8.dp).clip(CircleShape),
+                            modifier = Modifier.size(56.dp).padding(6.dp).clip(CircleShape),
                             contentScale = androidx.compose.ui.layout.ContentScale.Crop
                         )
                     } else {
                         Box(
-                            modifier = Modifier.size(72.dp).padding(8.dp).clip(CircleShape)
+                            modifier = Modifier.size(56.dp).padding(6.dp).clip(CircleShape)
                                 .background(MaterialTheme.colorScheme.surfaceVariant),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(Icons.Default.Android, null,
                                 tint = EmeraldGreen.copy(alpha = 0.4f),
-                                modifier = Modifier.size(40.dp))
+                                modifier = Modifier.size(32.dp))
                         }
                     }
                 }
-                Spacer(Modifier.height(16.dp))
-                Text(app.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
-                Text(app.packageName, style = MaterialTheme.typography.bodySmall, color = LogoPurple.copy(alpha = 0.6f), textAlign = TextAlign.Center)
+                Spacer(Modifier.height(8.dp))
+                Text(app.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(app.packageName, style = MaterialTheme.typography.labelSmall, color = LogoPurple.copy(alpha = 0.6f), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         },
         text = {
-            Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                // Info Grid
-                val sdf = java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.getDefault())
-                val installDate = sdf.format(java.util.Date(app.installedDate))
-                val updateDate = sdf.format(java.util.Date(app.lastUpdated))
-                val neverStr = stringResource(R.string.info_never)
-                val lastUsedDate = if (app.lastUsed == 0L) neverStr else sdf.format(java.util.Date(app.lastUsed))
-                val source = when {
-                    app.installerStore == null -> stringResource(R.string.source_unknown)
-                    app.installerStore.contains("vending") || app.installerStore.contains("play") -> stringResource(R.string.source_play)
-                    app.installerStore.contains("amazon") -> stringResource(R.string.source_amazon)
-                    else -> app.installerStore
-                }
-                
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_version), app.version, Icons.Default.Info)
-                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_size), app.size, Icons.Default.SdStorage)
-                }
-                Spacer(Modifier.height(8.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_target), "API ${app.targetSdk}", Icons.Default.DataObject)
-                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_last_used), lastUsedDate, Icons.Default.History)
-                }
-                Spacer(Modifier.height(8.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_installed), installDate, Icons.Default.Event)
-                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_updated), updateDate, Icons.Default.Update)
-                }
-                Spacer(Modifier.height(8.dp))
-                InfoBox(Modifier.fillMaxWidth(), stringResource(R.string.info_source), source, Icons.Default.Source)
-                
-                Spacer(modifier = Modifier.height(20.dp))
-                
-                // Surgical Action Buttons Row 1: UNINSTALL
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                // 1. Surgical Action Buttons Row 1: UNINSTALL
                 if (!app.isSystem) {
                     Button(
                         onClick = onUninstall,
@@ -1449,9 +1425,8 @@ fun AppActionDialog(
                     Spacer(Modifier.height(8.dp))
                 }
                 
-                // Split APK warning banner
+                // 2. Split APK warning banner
                 if (app.isSplitApk) {
-                    Spacer(Modifier.height(4.dp))
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         color = Color(0xFFFF8C00).copy(alpha = 0.1f),
@@ -1475,7 +1450,7 @@ fun AppActionDialog(
                     Spacer(Modifier.height(8.dp))
                 }
 
-                // Surgical Action Buttons Row 2: LAUNCH & EXTRACT/BACKUP
+                // 3. Surgical Action Buttons Row 2: LAUNCH & EXTRACT/BACKUP
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = onLaunch,
@@ -1514,7 +1489,7 @@ fun AppActionDialog(
                 
                 Spacer(Modifier.height(8.dp))
                 
-                // Row 3: SHARE & SETTINGS
+                // 4. Row 3: SHARE & SETTINGS
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = onShare,
@@ -1537,10 +1512,46 @@ fun AppActionDialog(
                         Text("SETTINGS", fontSize = 11.sp, fontWeight = FontWeight.Black)
                     }
                 }
+
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 8.dp), thickness = 1.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                Spacer(Modifier.height(16.dp))
+
+                // 5. Info Grid
+                val sdf = java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.getDefault())
+                val installDate = sdf.format(java.util.Date(app.installedDate))
+                val updateDate = sdf.format(java.util.Date(app.lastUpdated))
+                val neverStr = stringResource(R.string.info_never)
+                val lastUsedDate = if (app.lastUsed == 0L) neverStr else sdf.format(java.util.Date(app.lastUsed))
+                val source = when {
+                    app.installerStore == null -> stringResource(R.string.source_unknown)
+                    app.installerStore.contains("vending") || app.installerStore.contains("play") -> stringResource(R.string.source_play)
+                    app.installerStore.contains("amazon") -> stringResource(R.string.source_amazon)
+                    else -> app.installerStore
+                }
+                
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_version), app.version, Icons.Default.Info)
+                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_size), app.size, Icons.Default.SdStorage)
+                }
+                Spacer(Modifier.height(6.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_target), "API ${app.targetSdk}", Icons.Default.DataObject)
+                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_last_used), lastUsedDate, Icons.Default.History)
+                }
+                Spacer(Modifier.height(6.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_installed), installDate, Icons.Default.Event)
+                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_updated), updateDate, Icons.Default.Update)
+                }
+                Spacer(Modifier.height(6.dp))
+                InfoBox(Modifier.fillMaxWidth(), stringResource(R.string.info_source), source, Icons.Default.Source)
             }
         },
         shape = RoundedCornerShape(32.dp),
-        containerColor = MaterialTheme.colorScheme.surface
+        containerColor = MaterialTheme.colorScheme.surface,
+        modifier = Modifier.fillMaxWidth(0.9f),
+        properties = DialogProperties(usePlatformDefaultWidth = false)
     )
 }
 
@@ -1551,14 +1562,14 @@ fun InfoBox(modifier: Modifier, label: String, value: String, icon: ImageVector)
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
         shape = RoundedCornerShape(16.dp)
     ) {
-        Column(Modifier.padding(12.dp)) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, null, Modifier.size(14.dp), tint = LogoPurple)
+                Icon(icon, null, Modifier.size(12.dp), tint = LogoPurple)
                 Spacer(Modifier.width(4.dp))
-                Text(label, fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color.Gray)
+                Text(label, fontSize = 9.sp, fontWeight = FontWeight.Black, color = Color.Gray)
             }
-            Spacer(Modifier.height(4.dp))
-            Text(value, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+            Spacer(Modifier.height(2.dp))
+            Text(value, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
