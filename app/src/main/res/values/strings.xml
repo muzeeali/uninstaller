@@ -114,5 +114,5 @@
     <string name="notif_storage_low_text">Only %1$s free (%2$d%%). Tap to reclaim space.</string>
     <string name="notif_storage_low_big_text">Your storage is %1$d%% full.\nUsed: %2$s   ·   Free: %3$s (%4$d%%)\n\nOpen Uninstaller to remove unused apps and free space.</string>
     <string name="share_app_text">Check out Surgical Uninstaller! It helps you manage apps and free up space with precision: https://play.google.com/store/apps/details?id=%1$s</string>
-    <string name="share_specific_app">Found this app helpful: %1$s. Check it out on Google Play: https://play.google.com/store/apps/details?id=%2$s</string>
+    <string name="share_specific_app">🚀 Check out %1$s: https://play.google.com/store/apps/details?id=%2$s\n\n📦 Shared via Uninstaller — The fastest way to uninstall multiple apps and reclaim storage: https://play.google.com/store/apps/details?id=%3$s</string>
 </resources>

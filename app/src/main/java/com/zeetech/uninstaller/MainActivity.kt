@@ -1281,7 +1281,8 @@ fun HomeScreen(
                 onShare = {
                     val shareIntent = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
-                        putExtra(Intent.EXTRA_TEXT, context.getString(R.string.share_specific_app, app.name, app.packageName))
+                        val contextPackage = context.packageName
+                        putExtra(Intent.EXTRA_TEXT, context.getString(R.string.share_specific_app, app.name, app.packageName, contextPackage))
                     }
                     context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.action_share)))
                     appActionToShow = null
