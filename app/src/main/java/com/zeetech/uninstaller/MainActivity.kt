@@ -51,9 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -230,6 +228,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (enabled) StorageAlertWorker.schedule(ctx) else StorageAlertWorker.cancel(ctx)
     }
 
+    val appVersionName: String = try {
+        val pInfo = application.packageManager.getPackageInfo(application.packageName, 0)
+        pInfo.versionName ?: "1.0.0"
+    } catch (e: Exception) { "1.1.0" }
+
     private var discoveredJunk = listOf<File>()
 
     init {
@@ -368,6 +371,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             
             _uiState.emit(AppUiState.CleanFinished)
             discoveredJunk = emptyList()
+            // Reload storage stats and app list after a clean-up
+            refreshList()
         }
     }
 
@@ -702,7 +707,15 @@ fun UninstallerApp(
                         currentScreen = if (currentScreen == "home") "settings" else "home" 
                     },
                     showSettings = currentScreen == "home",
-                    onRefresh = if (currentScreen == "home") {{ viewModel.refreshList() }} else null
+                    onRefresh = if (currentScreen == "home") {{ viewModel.refreshList() }} else null,
+                    onShareApp = {
+                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            val contextPackage = context.packageName
+                            putExtra(Intent.EXTRA_TEXT, context.getString(R.string.share_app_text, contextPackage))
+                        }
+                        context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.item_share)))
+                    }
                 )
             }
         }
@@ -809,17 +822,29 @@ fun UninstallerTopBar(
     onThemeToggle: () -> Unit,
     onSettingsClick: () -> Unit,
     showSettings: Boolean,
-    onRefresh: (() -> Unit)? = null
+    onRefresh: (() -> Unit)? = null,
+    onShareApp: (() -> Unit)? = null
 ) {
     CenterAlignedTopAppBar(
         navigationIcon = {
-            if (onRefresh != null) {
-                IconButton(onClick = onRefresh) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = stringResource(R.string.content_refresh),
-                        tint = EmeraldGreen
-                    )
+            Row {
+                if (onRefresh != null) {
+                    IconButton(onClick = onRefresh) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = stringResource(R.string.content_refresh),
+                            tint = EmeraldGreen
+                        )
+                    }
+                }
+                if (onShareApp != null) {
+                    IconButton(onClick = onShareApp) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = stringResource(R.string.item_share),
+                            tint = EmeraldGreen
+                        )
+                    }
                 }
             }
         },
@@ -1000,19 +1025,25 @@ fun HomeScreen(
 
                     DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
                         Text(stringResource(R.string.sort_by), modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        listOf("Name", "Size", "Date", "Date (Used)").forEach { option ->
+                        val sortOptions = listOf(
+                            "Name" to stringResource(R.string.sort_name),
+                            "Size" to stringResource(R.string.sort_size),
+                            "Date" to stringResource(R.string.sort_date),
+                            "Date (Used)" to stringResource(R.string.sort_date_used)
+                        )
+                        sortOptions.forEach { (key, label) ->
                             DropdownMenuItem(
-                                text = { Text(option) },
-                                trailingIcon = { if(sortBy == option) Icon(Icons.Default.Check, null, Modifier.size(16.dp)) },
+                                text = { Text(label) },
+                                trailingIcon = { if(sortBy == key) Icon(Icons.Default.Check, null, Modifier.size(16.dp)) },
                                 onClick = { 
-                                    if (option == "Date (Used)" && !hasUsageAccess) {
+                                    if (key == "Date (Used)" && !hasUsageAccess) {
                                         try {
                                             context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
                                         } catch (e: Exception) {
                                             context.startActivity(Intent(Settings.ACTION_SETTINGS))
                                         }
                                     } else {
-                                        onSortChange(option, isAscending)
+                                        onSortChange(key, isAscending)
                                     }
                                     showSortMenu = false 
                                 }
@@ -1230,7 +1261,7 @@ fun HomeScreen(
                 onLaunch = {
                     try {
                         val intent = context.packageManager.getLaunchIntentForPackage(app.packageName)
-                        context.startActivity(intent)
+                        intent?.let { context.startActivity(it) }
                     } catch (e: Exception) {}
                     appActionToShow = null
                 },
@@ -1250,10 +1281,9 @@ fun HomeScreen(
                 onShare = {
                     val shareIntent = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
-                        val myPackage = context.packageName
-                        putExtra(Intent.EXTRA_TEXT, "Quickly uninstalling ${app.name}? Check out this Surgical Uninstaller: https://play.google.com/store/apps/details?id=$myPackage")
+                        putExtra(Intent.EXTRA_TEXT, context.getString(R.string.share_specific_app, app.name, app.packageName))
                     }
-                    context.startActivity(Intent.createChooser(shareIntent, "Share app link"))
+                    context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.action_share)))
                     appActionToShow = null
                 }
             )
@@ -1294,7 +1324,7 @@ fun AppRow(app: AppInfo, isIconCached: Boolean, isSelected: Boolean, onToggle: (
                     Icons.Default.Lock, 
                     "Protected", 
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), 
-                    modifier = Modifier.size(20.dp).padding(end = 8.dp)
+                    modifier = Modifier.padding(end = 8.dp).size(20.dp)
                 )
             }
 
@@ -1709,10 +1739,10 @@ fun CleanFinishedScreen(onDone: () -> Unit) {
             }
             Spacer(modifier = Modifier.height(32.dp))
             Row {
-                Text("SURGERY ", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = LogoPurple)
-                Text("COMPLETE", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = EmeraldGreen)
+                Text(stringResource(R.string.title_surgery), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = LogoPurple)
+                Text(stringResource(R.string.status_complete), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = EmeraldGreen)
             }
-            Text("Your device is now optimized.", textAlign = TextAlign.Center, color = Color.Gray, fontWeight = FontWeight.Medium)
+            Text(stringResource(R.string.device_optimized), textAlign = TextAlign.Center, color = Color.Gray, fontWeight = FontWeight.Medium)
             
             Spacer(modifier = Modifier.height(48.dp))
             Button(
@@ -1722,7 +1752,7 @@ fun CleanFinishedScreen(onDone: () -> Unit) {
                 shape = RoundedCornerShape(20.dp),
                 elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp)
             ) {
-                Text("DONE", fontWeight = FontWeight.Black, fontSize = 18.sp, letterSpacing = 2.sp)
+                Text(stringResource(R.string.action_done), fontWeight = FontWeight.Black, fontSize = 18.sp, letterSpacing = 2.sp)
             }
         }
     }
@@ -1779,9 +1809,7 @@ fun SettingsScreen(viewModel: AppViewModel) {
                     }
                     Text(stringResource(R.string.subtitle_precision), fontStyle = androidx.compose.ui.text.font.FontStyle.Italic, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(modifier = Modifier.height(12.dp))
-                    HorizontalDivider(color = EmeraldGreen.copy(alpha = 0.1f), thickness = 1.dp, modifier = Modifier.width(100.dp))
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text("Version 1.1.0 • Zee Tech", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                    Text("Version ${viewModel.appVersionName} • Zee Tech", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                 }
             }
         }
@@ -2055,10 +2083,10 @@ fun SettingsScreen(viewModel: AppViewModel) {
                     onClick = {
                         val shareIntent = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
-                            val myPackage = context.packageName
-                            putExtra(Intent.EXTRA_TEXT, "Free up space with Surgical Uninstaller: https://play.google.com/store/apps/details?id=$myPackage")
+                            val contextPackage = context.packageName
+                            putExtra(Intent.EXTRA_TEXT, context.getString(R.string.share_app_text, contextPackage))
                         }
-                        context.startActivity(Intent.createChooser(shareIntent, "Share app link"))
+                        context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.item_share)))
                     }
                 )
             }
@@ -2075,6 +2103,9 @@ fun SettingsScreen(viewModel: AppViewModel) {
                     }
                 )
             }
+        }
+        item {
+            Spacer(modifier = Modifier.height(32.dp))
         }
     }
 }

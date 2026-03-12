@@ -79,14 +79,12 @@ class StorageAlertWorker(
 
         val notification = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(android.R.drawable.stat_sys_warning)
-            .setContentTitle("⚠️ Storage Critical — $usedPct% Used")
-            .setContentText("Only $freeGb free ($freePct%). Tap to reclaim space.")
+            .setContentTitle(context.getString(R.string.notif_storage_low_title, usedPct))
+            .setContentText(context.getString(R.string.notif_storage_low_text, freeGb, freePct))
             .setStyle(
                 NotificationCompat.BigTextStyle()
                     .bigText(
-                        "Your storage is $usedPct% full.\n" +
-                        "Used: $usedGb   ·   Free: $freeGb ($freePct%)\n\n" +
-                        "Open Uninstaller to remove unused apps and free space."
+                        context.getString(R.string.notif_storage_low_big_text, usedPct, usedGb, freeGb, freePct)
                     )
             )
             .setPriority(NotificationCompat.PRIORITY_HIGH)
