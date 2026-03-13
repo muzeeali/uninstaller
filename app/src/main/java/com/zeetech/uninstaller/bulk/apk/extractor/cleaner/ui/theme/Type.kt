@@ -1,4 +1,4 @@
-package com.zeetech.uninstaller.ui.theme
+package com.zeetech.uninstaller.bulk.apk.extractor.cleaner.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle

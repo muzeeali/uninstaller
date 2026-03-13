@@ -1,4 +1,4 @@
-package com.zeetech.uninstaller
+package com.zeetech.uninstaller.bulk.apk.extractor.cleaner
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -112,7 +112,6 @@ class StorageAlertWorker(
 
         /** Schedule a periodic check every 6 hours. Safe to call multiple times — replaces existing. */
         fun schedule(context: Context) {
-            Log.d("StorageAlertWorker", "Scheduling storage alert worker")
             val request = PeriodicWorkRequestBuilder<StorageAlertWorker>(6, TimeUnit.HOURS)
                 .setConstraints(Constraints.Builder().build())
                 .build()

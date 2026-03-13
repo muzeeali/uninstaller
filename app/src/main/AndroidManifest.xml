@@ -38,7 +38,7 @@
         <!-- Securely provides files and folders to other apps via intent -->
         <provider
             android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.provider"
+            android:authorities="com.zeetech.uninstaller.bulk.apk.extractor.cleaner.provider"
             android:exported="false"
             android:grantUriPermissions="true">
             <meta-data

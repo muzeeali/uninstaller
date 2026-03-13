@@ -1,4 +1,4 @@
-package com.zeetech.uninstaller
+package com.zeetech.uninstaller.bulk.apk.extractor.cleaner
 
 import android.app.Application
 import android.content.Intent
@@ -69,10 +69,10 @@ import coil.compose.AsyncImage
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.zeetech.uninstaller.ui.theme.UninstallerTheme
-import com.zeetech.uninstaller.ui.theme.EmeraldGreen
-import com.zeetech.uninstaller.ui.theme.LogoPurple
-import com.zeetech.uninstaller.ui.theme.Charcoal
+import com.zeetech.uninstaller.bulk.apk.extractor.cleaner.ui.theme.UninstallerTheme
+import com.zeetech.uninstaller.bulk.apk.extractor.cleaner.ui.theme.EmeraldGreen
+import com.zeetech.uninstaller.bulk.apk.extractor.cleaner.ui.theme.LogoPurple
+import com.zeetech.uninstaller.bulk.apk.extractor.cleaner.ui.theme.Charcoal
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow

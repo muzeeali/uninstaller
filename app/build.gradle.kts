@@ -4,17 +4,12 @@ plugins {
 }
 
 android {
-    namespace = "com.zeetech.uninstaller"
-    compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
-    }
-
+    namespace = "com.zeetech.uninstaller.bulk.apk.extractor.cleaner"
+    compileSdk = 35
     defaultConfig {
-        applicationId = "com.zeetech.uninstaller"
+        applicationId = "com.zeetech.uninstaller.bulk.apk.extractor.cleaner"
         minSdk = 24
-        targetSdk = 36
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
 
@@ -23,7 +18,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
