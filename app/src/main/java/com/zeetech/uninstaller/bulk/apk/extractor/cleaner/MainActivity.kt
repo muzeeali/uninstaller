@@ -408,12 +408,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val context = getApplication<Application>()
             val pm = context.packageManager
 
-            // ONE bulk call: getInstalledPackages gives us PackageInfo (version, dates) in one shot
-            // FLAG 0 strips out massive META_DATA dumps that we don't need, instantly saving 40% RAM usage on initial load
-            @Suppress("DEPRECATION")
-            val packages = pm.getInstalledPackages(0)
+            // OPTIMIZATION: Use getInstalledApplications first (lighter Binder payload)
+            // then process metadata in smaller chunks to avoid inter-process buffer overflow.
+            val apps = try {
+                pm.getInstalledApplications(0)
+            } catch (e: Exception) {
+                emptyList()
+            }
 
-            // Usage stats — 30 days is plenty (was 365 days = huge dataset)
+            // Usage stats — 30 days is plenty
             val usageMap: Map<String, android.app.usage.UsageStats> = try {
                 if (hasUsageAccess()) {
                     val mgr = context.getSystemService(Application.USAGE_STATS_SERVICE) as UsageStatsManager
@@ -422,15 +425,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 } else emptyMap()
             } catch (e: Exception) { emptyMap() }
 
-            // OPTIMIZATION: Separate user vs system packages. We will staggered-load the User apps first for instant UI response time.
             val userPackages = mutableListOf<android.content.pm.PackageInfo>()
             val systemPackages = mutableListOf<android.content.pm.PackageInfo>()
-            packages.forEach { pkg ->
-                val appInfo = pkg.applicationInfo ?: return@forEach
-                if ((appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0) {
-                    systemPackages.add(pkg)
-                } else {
-                    userPackages.add(pkg)
+
+            // Batch fetch PackageInfo to avoid DeadObjectException / BadParcelableException
+            apps.forEach { appInfo ->
+                try {
+                    val pkg = pm.getPackageInfo(appInfo.packageName, 0)
+                    if ((appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0) {
+                        systemPackages.add(pkg)
+                    } else {
+                        userPackages.add(pkg)
+                    }
+                } catch (e: Exception) {
+                    // App might have been uninstalled during scan
                 }
             }
 
@@ -500,7 +508,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
             viewModelScope.launch(Dispatchers.IO) {
                 val newCachedPackages = _cachedIcons.value.toMutableSet()
-                packages.chunked(30).forEach { chunk ->
+                // Use the userPackages and systemPackages we just filtered
+                val allPkgs = (userPackages + systemPackages)
+                
+                allPkgs.chunked(30).forEach { chunk ->
                     var changed = false
                     chunk.forEach { pkgInfo ->
                         val appInfo = pkgInfo.applicationInfo ?: return@forEach
