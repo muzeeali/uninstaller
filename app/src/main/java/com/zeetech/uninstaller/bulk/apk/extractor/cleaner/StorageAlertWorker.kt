@@ -8,7 +8,6 @@ import android.content.Intent
 import android.os.Build
 import android.os.Environment
 import android.os.StatFs
-import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.*
 import java.util.concurrent.TimeUnit
