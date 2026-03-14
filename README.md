@@ -12,6 +12,7 @@ A powerful, SEO-optimized Android utility for bulk uninstallation, APK extractio
 
 ## 🛠️ Technical Details
 
+- **Version:** `1.0.1` (Build 2)
 - **Package ID:** `com.zeetech.uninstaller.bulk.apk.extractor.cleaner`
 - **Language:** Kotlin / Jetpack Compose
 - **Architecture:** MVVM (Model-View-ViewModel)

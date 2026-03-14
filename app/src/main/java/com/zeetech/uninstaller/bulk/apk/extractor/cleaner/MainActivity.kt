@@ -61,6 +61,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.graphics.drawable.toBitmap
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.work.Configuration
+import androidx.work.WorkManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -95,6 +97,18 @@ class MainActivity : ComponentActivity() {
         // Automated Surgical Scan on Launch
         if (viewModel.scanOnLaunch.value && viewModel.hasAllFilesAccess()) {
             viewModel.startDeepClean()
+        }
+
+        // Initialize WorkManager manually (default disabled in Manifest to prevent crash)
+        try {
+            WorkManager.initialize(
+                this,
+                Configuration.Builder()
+                    .setMinimumLoggingLevel(android.util.Log.INFO)
+                    .build()
+            )
+        } catch (e: Exception) {
+            // Already initialized or initialization failed
         }
 
         // Schedule background storage alert worker if enabled
@@ -224,8 +238,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     val appVersionName: String = try {
         val pInfo = application.packageManager.getPackageInfo(application.packageName, 0)
-        pInfo.versionName ?: "1.0.0"
-    } catch (e: Exception) { "1.0.0" }
+        pInfo.versionName ?: "1.0.1"
+    } catch (e: Exception) { "1.0.1" }
 
     private var discoveredJunk = listOf<File>()
 
