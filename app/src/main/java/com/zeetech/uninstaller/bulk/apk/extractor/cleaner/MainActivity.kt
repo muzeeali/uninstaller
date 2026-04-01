@@ -82,11 +82,23 @@ import java.io.FileOutputStream
 
 class MainActivity : ComponentActivity() {
     private lateinit var viewModel: AppViewModel
+    private var pendingHistoryApp: AppInfo? = null
 
     private val uninstallLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
-        viewModel.refreshList()
+        if (it.resultCode == RESULT_OK || it.resultCode == RESULT_CANCELED) {
+            // Android doesn't return a reliable SUCCESS for uninstalls, 
+            // so we refresh and check if the package is gone.
+            viewModel.refreshList { isGone ->
+                if (isGone) {
+                    pendingHistoryApp?.let { app -> viewModel.addToHistory(app) }
+                }
+                pendingHistoryApp = null
+            }
+        } else {
+            pendingHistoryApp = null
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -152,9 +164,10 @@ class MainActivity : ComponentActivity() {
                         viewModel = viewModel,
                         isDarkTheme = darkTheme,
                         onThemeToggle = { darkTheme = !darkTheme },
-                        onUninstallRequest = { packageName ->
+                        onUninstallRequest = { app ->
+                            pendingHistoryApp = app
                             val intent = Intent(Intent.ACTION_DELETE).apply {
-                                data = Uri.parse("package:$packageName")
+                                data = Uri.parse("package:${app.packageName}")
                             }
                             uninstallLauncher.launch(intent)
                         },
@@ -196,6 +209,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // Set of package names whose icons are currently cached on disk
     private val _cachedIcons = MutableStateFlow<Set<String>>(emptySet())
     val cachedIcons: StateFlow<Set<String>> = _cachedIcons
+
+    private val _uninstalledHistory = MutableStateFlow<List<HistoryAppRecord>>(emptyList())
+    val uninstalledHistory: StateFlow<List<HistoryAppRecord>> = _uninstalledHistory
 
     // Cached success state — avoids reloading when navigating back from a popup
     private var cachedSuccessState: AppUiState.Success? = null
@@ -245,6 +261,117 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         loadApps()
+        loadHistory()
+        detectExternallyUninstalled()
+    }
+
+    private fun loadHistory() {
+        val json = prefs.getString("uninstalled_history", null)
+        if (json != null) {
+            try {
+                // Simple manual parsing to avoid heavy GSON/KotlinX-Serialization dependency if not present
+                val list = mutableListOf<HistoryAppRecord>()
+                val items = json.split("|||")
+                items.forEach { item ->
+                    val parts = item.split("###")
+                    if (parts.size == 3) {
+                        list.add(HistoryAppRecord(parts[0], parts[1], parts[2].toLong()))
+                    }
+                }
+                _uninstalledHistory.value = list.sortedByDescending { it.timestamp }
+            } catch (e: Exception) { _uninstalledHistory.value = emptyList() }
+        }
+    }
+
+    private fun saveHistory(list: List<HistoryAppRecord>) {
+        val serialized = list.joinToString("|||") { "${it.name}###${it.packageName}###${it.timestamp}" }
+        prefs.edit().putString("uninstalled_history", serialized).apply()
+    }
+
+    fun addToHistory(app: AppInfo) {
+        val newList = _uninstalledHistory.value.toMutableList()
+        // Avoid duplicates
+        newList.removeAll { it.packageName == app.packageName }
+        newList.add(0, HistoryAppRecord(app.name, app.packageName, System.currentTimeMillis()))
+        _uninstalledHistory.value = newList
+        saveHistory(newList)
+    }
+
+    fun clearHistory() {
+        _uninstalledHistory.value = emptyList()
+        prefs.edit().remove("uninstalled_history").apply()
+    }
+
+    // -----------------------------------------------------------------------
+    // External Uninstall Detection
+    // -----------------------------------------------------------------------
+
+    /** Persists a packageName → appName map so we can name orphaned apps later. */
+    private fun saveAppNameMapping(apps: List<AppInfo>) {
+        val serialized = apps.joinToString("|||") { "${it.packageName}###${it.name}" }
+        prefs.edit().putString("app_name_map", serialized).apply()
+    }
+
+    /** Returns the saved packageName → appName map from the last scan. */
+    private fun loadAppNameMapping(): Map<String, String> {
+        val raw = prefs.getString("app_name_map", null) ?: return emptyMap()
+        return try {
+            raw.split("|||").associate {
+                val parts = it.split("###")
+                parts[0] to parts[1]
+            }
+        } catch (e: Exception) { emptyMap() }
+    }
+
+    /**
+     * On app open: compare icon cache files (= apps seen before) with
+     * currently installed packages. Any gap means the app was uninstalled
+     * externally. Add those to history if not already there.
+     */
+    private fun detectExternallyUninstalled() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>()
+            val iconsDir = File(context.cacheDir, "icons_cache")
+            if (!iconsDir.exists()) return@launch
+
+            // Packages for whom we have saved icons (previously seen)
+            val cachedPackages = iconsDir.listFiles()
+                ?.filter { it.extension == "png" }
+                ?.map { it.nameWithoutExtension }
+                ?.toSet() ?: return@launch
+
+            if (cachedPackages.isEmpty()) return@launch
+
+            // Currently installed packages
+            val pm = context.packageManager
+            val installedPackages = pm.getInstalledApplications(0)
+                .map { it.packageName }.toSet()
+
+            // Gap = cached but no longer installed
+            val orphaned = cachedPackages - installedPackages
+            if (orphaned.isEmpty()) return@launch
+
+            // Filter out packages already recorded in history
+            val alreadyInHistory = _uninstalledHistory.value.map { it.packageName }.toSet()
+            val toAdd = orphaned - alreadyInHistory
+            if (toAdd.isEmpty()) return@launch
+
+            // Look up display names from the saved mapping
+            val nameMap = loadAppNameMapping()
+
+            val newEntries = toAdd.map { pkg ->
+                HistoryAppRecord(
+                    name = nameMap[pkg] ?: pkg, // fallback to packageName if name not found
+                    packageName = pkg,
+                    timestamp = System.currentTimeMillis()
+                )
+            }
+
+            val merged = (newEntries + _uninstalledHistory.value)
+                .sortedByDescending { it.timestamp }
+            _uninstalledHistory.value = merged
+            saveHistory(merged)
+        }
     }
 
     fun updateSortPreference(newSortBy: String, newIsAscending: Boolean) {
@@ -281,8 +408,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun refreshList() {
-        loadApps(force = true)   // Force reload after uninstall
+    fun refreshList(onCompletion: ((Boolean) -> Unit)? = null) {
+        loadApps(force = true, onCompletion = onCompletion)   // Force reload after uninstall
+    }
+
+    /** Called when Refresh is tapped on the History screen.
+     *  Reloads installed apps (updates name map) then re-runs external uninstall detection. */
+    fun refreshHistory() {
+        loadApps(force = true, onCompletion = {
+            detectExternallyUninstalled()
+        })
     }
 
     fun startDeepClean() {
@@ -404,14 +539,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun loadApps(force: Boolean = false) {
+    private fun loadApps(force: Boolean = false, onCompletion: ((Boolean) -> Unit)? = null) {
         // Skip reload if we already have cached data (e.g. returning from a popup)
         if (!force && cachedSuccessState != null) {
-            viewModelScope.launch { _uiState.emit(cachedSuccessState!!) }
+            viewModelScope.launch { 
+                _uiState.emit(cachedSuccessState!!) 
+                onCompletion?.invoke(false)
+            }
             return
         }
 
         viewModelScope.launch(Dispatchers.IO) {
+            // Save current package names BEFORE the refresh so we can detect removals
+            val packagesBefore: Set<String> = if (onCompletion != null) {
+                (cachedSuccessState as? AppUiState.Success)?.apps?.map { it.packageName }?.toSet() ?: emptySet()
+            } else emptySet()
+
             _uiState.emit(AppUiState.Loading)
             val context = getApplication<Application>()
             val pm = context.packageManager
@@ -505,6 +648,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val finalSuccessState = if (fullAppList.isEmpty()) null else AppUiState.Success(fullAppList, storage)
             cachedSuccessState = finalSuccessState
             _uiState.emit(finalSuccessState ?: AppUiState.Empty)
+
+            if (onCompletion != null) {
+                // A package was truly uninstalled if it was present before but is absent now
+                val packagesAfter = fullAppList.map { it.packageName }.toSet()
+                val somethingWasRemoved = (packagesBefore - packagesAfter).isNotEmpty()
+                onCompletion.invoke(somethingWasRemoved)
+            }
+
+            // Save name mapping so external uninstalls can be identified on next open
+            saveAppNameMapping(fullAppList)
 
             // Load icons lazily in batches — UI is already visible and interactive
             val iconsDir = File(context.cacheDir, "icons_cache")
@@ -698,12 +851,18 @@ data class AppInfo(
     val isSplitApk: Boolean = false  // True when Play Store installed as App Bundle (multiple APK splits)
 )
 
+data class HistoryAppRecord(
+    val name: String,
+    val packageName: String,
+    val timestamp: Long
+)
+
 @Composable
 fun UninstallerApp(
     viewModel: AppViewModel,
     isDarkTheme: Boolean,
     onThemeToggle: () -> Unit,
-    onUninstallRequest: (String) -> Unit,
+    onUninstallRequest: (AppInfo) -> Unit,
     onRequestStoragePermission: () -> Unit
 ) {
     var currentScreen by rememberSaveable { mutableStateOf("home") }
@@ -719,22 +878,37 @@ fun UninstallerApp(
         topBar = {
             if (currentUiState !is AppUiState.Scanning && currentUiState !is AppUiState.CleanSummary) {
                 UninstallerTopBar(
-                    title = if (currentScreen == "home") "UNINSTALLER" else "SETTINGS",
+                    title = when (currentScreen) {
+                        "home" -> "UNINSTALLER"
+                        "history" -> "HISTORY"
+                        else -> "SETTINGS"
+                    },
                     isDarkTheme = isDarkTheme,
                     onThemeToggle = onThemeToggle,
-                    onSettingsClick = { 
-                        currentScreen = if (currentScreen == "home") "settings" else "home" 
+                    onSettingsClick = {
+                        currentScreen = when (currentScreen) {
+                            "home" -> "settings"
+                            "history" -> "home"
+                            else -> "home"
+                        }
                     },
                     showSettings = currentScreen == "home",
-                    onRefresh = if (currentScreen == "home") {{ viewModel.refreshList() }} else null,
-                    onShareApp = {
+                    // Home: Refresh + History | Settings: Share + History | History: Refresh + Settings
+                    onRefresh = when (currentScreen) {
+                        "home" -> {{ viewModel.refreshList() }}
+                        "history" -> {{ viewModel.refreshHistory() }}
+                        else -> null
+                    },
+                    onShareApp = if (currentScreen == "settings") {{
                         val shareIntent = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
                             val contextPackage = context.packageName
                             putExtra(Intent.EXTRA_TEXT, context.getString(R.string.share_app_text, contextPackage))
                         }
                         context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.item_share)))
-                    }
+                    }} else null,
+                    onSettingsNav = if (currentScreen == "history") {{ currentScreen = "settings" }} else null,
+                    onHistory = if (currentScreen != "history") {{ currentScreen = "history" }} else null
                 )
             }
         }
@@ -781,6 +955,15 @@ fun UninstallerApp(
                             },
                             onRefresh = { viewModel.refreshList() },
                             onExtract = { viewModel.extractApk(it, haptics) }
+                        )
+                    } else if (currentScreen == "history") {
+                        val history by viewModel.uninstalledHistory.collectAsState()
+                        val cachedIcons by viewModel.cachedIcons.collectAsState()
+                        HistoryScreen(
+                            history = history,
+                            cachedIcons = cachedIcons,
+                            onClearHistory = { viewModel.clearHistory() },
+                            onBack = { currentScreen = "home" }
                         )
                     } else {
                         SettingsScreen(viewModel)
@@ -842,7 +1025,9 @@ fun UninstallerTopBar(
     onSettingsClick: () -> Unit,
     showSettings: Boolean,
     onRefresh: (() -> Unit)? = null,
-    onShareApp: (() -> Unit)? = null
+    onShareApp: (() -> Unit)? = null,
+    onSettingsNav: (() -> Unit)? = null,
+    onHistory: (() -> Unit)? = null
 ) {
     CenterAlignedTopAppBar(
         navigationIcon = {
@@ -865,54 +1050,48 @@ fun UninstallerTopBar(
                         )
                     }
                 }
+                if (onSettingsNav != null) {
+                    IconButton(onClick = onSettingsNav) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Settings",
+                            tint = EmeraldGreen
+                        )
+                    }
+                }
+                if (onHistory != null) {
+                    IconButton(onClick = onHistory) {
+                        Icon(
+                            imageVector = Icons.Default.History,
+                            contentDescription = "History",
+                            tint = EmeraldGreen
+                        )
+                    }
+                }
             }
         },
         title = {
             when (title) {
                 "UNINSTALLER" -> {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "UNINSTALLE",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Black,
-                            color = LogoPurple,
-                            letterSpacing = 1.sp
-                        )
-                        Text(
-                            text = "R",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Black,
-                            color = EmeraldGreen,
-                            letterSpacing = 1.sp
-                        )
+                        Text("UNINSTALLE", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 1.sp)
+                        Text("R", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 1.sp)
                     }
                 }
                 "SETTINGS" -> {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "SETTING",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Black,
-                            color = LogoPurple,
-                            letterSpacing = 1.sp
-                        )
-                        Text(
-                            text = "S",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Black,
-                            color = EmeraldGreen,
-                            letterSpacing = 1.sp
-                        )
+                        Text("SETTING", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 1.sp)
+                        Text("S", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 1.sp)
+                    }
+                }
+                "HISTORY" -> {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("HISTOR", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 1.sp)
+                        Text("Y", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 1.sp)
                     }
                 }
                 else -> {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = LogoPurple,
-                        letterSpacing = 1.sp
-                    )
+                    Text(text = title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LogoPurple, letterSpacing = 1.sp)
                 }
             }
         },
@@ -947,7 +1126,7 @@ fun HomeScreen(
     isAscending: Boolean,
     storageThreshold: Float,
     onSortChange: (String, Boolean) -> Unit,
-    onUninstallRequest: (String) -> Unit, 
+    onUninstallRequest: (AppInfo) -> Unit,
     onDeepCleanStart: () -> Unit,
     onRefresh: () -> Unit,
     onExtract: (AppInfo) -> Unit
@@ -1170,6 +1349,7 @@ fun HomeScreen(
                     
                     val userTabStr = stringResource(R.string.tab_user, userCount)
                     val systemTabStr = stringResource(R.string.tab_system, systemCount)
+
                     listOf(userTabStr, systemTabStr).forEachIndexed { index, title ->
                         val isSelected = pagerState.currentPage == index
                         Box(
@@ -1253,7 +1433,7 @@ fun HomeScreen(
                 BulkActionBar(
                     count = selectedApps.size,
                     reclaimedSpace = formatSize(selectedApps.sumOf { it.sizeBytes }),
-                    onUninstall = { selectedApps.forEach { onUninstallRequest(it.packageName) } },
+                    onUninstall = { selectedApps.forEach { onUninstallRequest(it) } },
                     onSelectAll = {
                         if (selectedApps.size == currentVisibleApps.size) selectedApps.clear()
                         else {
@@ -1274,7 +1454,7 @@ fun HomeScreen(
                 isIconCached = cachedIcons.contains(app.packageName),
                 onDismiss = { appActionToShow = null },
                 onUninstall = { 
-                    onUninstallRequest(app.packageName)
+                    onUninstallRequest(app)
                     appActionToShow = null
                 },
                 onLaunch = {
@@ -2208,6 +2388,134 @@ fun PermissionHubItem(label: String, desc: String, isGranted: Boolean, onClick: 
                 fontWeight = FontWeight.Black,
                 color = if (isGranted) EmeraldGreen else Color.Red
             )
+        }
+    }
+}
+@Composable
+fun HistoryScreen(
+    history: List<HistoryAppRecord>,
+    cachedIcons: Set<String>,
+    onClearHistory: () -> Unit,
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    var showConfirmDialog by remember { mutableStateOf(false) }
+
+    // Confirmation dialog
+    if (showConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showConfirmDialog = false },
+            icon = {
+                Icon(Icons.Default.DeleteForever, null, tint = Color.Red, modifier = Modifier.size(32.dp))
+            },
+            title = {
+                Text("Clear History?", fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
+            },
+            text = {
+                Text(
+                    "This will permanently remove all ${history.size} record${if (history.size != 1) "s" else ""} from your uninstall history.",
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onClearHistory()
+                        showConfirmDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Clear All", fontWeight = FontWeight.Black)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirmDialog = false }) {
+                    Text("Cancel", color = Color.Gray, fontWeight = FontWeight.Black)
+                }
+            },
+            shape = RoundedCornerShape(24.dp)
+        )
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        if (history.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.History, null, modifier = Modifier.size(64.dp), tint = EmeraldGreen.copy(alpha = 0.2f))
+                    Spacer(Modifier.height(16.dp))
+                    Text(stringResource(R.string.history_empty), color = Color.Gray)
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = { showConfirmDialog = true }) {
+                            Text(stringResource(R.string.action_clear_history), color = Color.Red, fontSize = 12.sp)
+                        }
+                    }
+                }
+                items(history) { record ->
+                    HistoryItem(
+                        record = record,
+                        isIconCached = cachedIcons.contains(record.packageName)
+                    ) {
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=${record.packageName}"))
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=${record.packageName}"))
+                            context.startActivity(intent)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun HistoryItem(record: HistoryAppRecord, isIconCached: Boolean, onClick: () -> Unit) {
+    val context = LocalContext.current
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable { onClick() },
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (isIconCached) {
+                val iconFile = File(context.cacheDir, "icons_cache/${record.packageName}.png")
+                AsyncImage(
+                    model = iconFile,
+                    contentDescription = null,
+                    modifier = Modifier.size(40.dp).clip(CircleShape)
+                )
+            } else {
+                Box(
+                    modifier = Modifier.size(40.dp).background(EmeraldGreen.copy(alpha = 0.1f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Shop, null, tint = EmeraldGreen, modifier = Modifier.size(20.dp))
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(record.name, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                Text(record.packageName, fontSize = 11.sp, color = Color.Gray)
+            }
+            Icon(Icons.AutoMirrored.Filled.OpenInNew, null, modifier = Modifier.size(16.dp), tint = EmeraldGreen)
         }
     }
 }

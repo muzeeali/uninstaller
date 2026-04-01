@@ -19,6 +19,9 @@
     <string name="apps_count">Apps: %1$d</string>
     <string name="tab_user">User (%1$d)</string>
     <string name="tab_system">System (%1$d)</string>
+    <string name="tab_history">History</string>
+    <string name="history_empty">No Apps Uninstalled Yet</string>
+    <string name="action_clear_history">Clear History</string>
     
     <string name="action_surgical_clean">Surgical Clean</string>
     <string name="items_selected_count">%1$d Items Selected</string>
