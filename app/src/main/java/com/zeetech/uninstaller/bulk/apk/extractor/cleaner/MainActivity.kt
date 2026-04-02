@@ -298,6 +298,25 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun clearHistory() {
+        val context = getApplication<Application>()
+        val iconsDir = File(context.cacheDir, "icons_cache")
+        val toClear = _uninstalledHistory.value
+
+        // Add all cleared packages to the permanent dismissed blocklist
+        val dismissed = loadDismissedPackages().toMutableSet()
+        toClear.forEach { dismissed.add(it.packageName) }
+        saveDismissedPackages(dismissed)
+
+        // Delete icon cache files on IO thread (storage cleanup, non-critical)
+        viewModelScope.launch(Dispatchers.IO) {
+            toClear.forEach { record ->
+                File(iconsDir, "${record.packageName}.png").apply { if (exists()) delete() }
+            }
+            val remaining = iconsDir.listFiles()
+                ?.map { it.nameWithoutExtension }?.toSet() ?: emptySet()
+            _cachedIcons.value = remaining
+        }
+
         _uninstalledHistory.value = emptyList()
         prefs.edit().remove("uninstalled_history").apply()
     }
@@ -323,10 +342,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) { emptyMap() }
     }
 
+    /** Packages the user has explicitly cleared — never auto-add these again. */
+    private fun loadDismissedPackages(): Set<String> {
+        val raw = prefs.getString("dismissed_packages", null) ?: return emptySet()
+        return raw.split("|||").filter { it.isNotBlank() }.toSet()
+    }
+
+    private fun saveDismissedPackages(set: Set<String>) {
+        prefs.edit().putString("dismissed_packages", set.joinToString("|||")).apply()
+    }
+
     /**
-     * On app open: compare icon cache files (= apps seen before) with
-     * currently installed packages. Any gap means the app was uninstalled
-     * externally. Add those to history if not already there.
+     * On app open / manual refresh: compare icon cache files (= apps seen before)
+     * with currently installed packages. Any gap = externally uninstalled.
+     * Skips packages already in history OR in the dismissed blocklist.
      */
     private fun detectExternallyUninstalled() {
         viewModelScope.launch(Dispatchers.IO) {
@@ -351,9 +380,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val orphaned = cachedPackages - installedPackages
             if (orphaned.isEmpty()) return@launch
 
-            // Filter out packages already recorded in history
+            // Skip packages already in history OR dismissed by user
             val alreadyInHistory = _uninstalledHistory.value.map { it.packageName }.toSet()
-            val toAdd = orphaned - alreadyInHistory
+            val dismissed = loadDismissedPackages()
+            val toAdd = orphaned - alreadyInHistory - dismissed
             if (toAdd.isEmpty()) return@launch
 
             // Look up display names from the saved mapping
