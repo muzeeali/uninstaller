@@ -1331,7 +1331,6 @@ fun HomeScreen(
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
             // 1. Unified Search & Sort Row — same height as toggle row (36dp)
-            Spacer(modifier = Modifier.height(12.dp))
             Row(
                 modifier = Modifier.fillMaxWidth().height(36.dp),
                 verticalAlignment = Alignment.CenterVertically,
