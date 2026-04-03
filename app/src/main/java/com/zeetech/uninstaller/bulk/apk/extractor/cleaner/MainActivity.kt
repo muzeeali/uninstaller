@@ -2084,7 +2084,10 @@ fun DeepCleanProgressScreen(progress: Float, currentTask: String) {
                 trackColor = LogoPurple.copy(alpha = 0.1f)
             )
             Spacer(modifier = Modifier.height(32.dp))
-            // Banner ad — user is idle during scan, non-intrusive placement
+        }
+
+        // Banner ad anchored to absolute bottom (Matching Home layout)
+        Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
             BannerAdView()
         }
     }
@@ -2092,8 +2095,13 @@ fun DeepCleanProgressScreen(progress: Float, currentTask: String) {
 
 @Composable
 fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, onCancel: () -> Unit) {
-    Box(modifier = Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             Surface(shape = CircleShape, color = LogoPurple.copy(alpha = 0.1f), modifier = Modifier.size(120.dp)) {
                 Icon(Icons.Default.Analytics, null, Modifier.padding(24.dp), tint = EmeraldGreen)
             }
@@ -2107,10 +2115,6 @@ fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, on
             Text("from $itemsCount cached zones", style = MaterialTheme.typography.bodyMedium, color = EmeraldGreen, fontWeight = FontWeight.Bold)
             
             Spacer(modifier = Modifier.height(32.dp))
-            // Banner ad — user is idle reviewing results, great monetization moment
-            BannerAdView()
-            Spacer(modifier = Modifier.height(16.dp))
-
             Button(
                 onClick = {
                     AdManager.showInterstitial()
@@ -2127,6 +2131,11 @@ fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, on
             TextButton(onClick = onCancel) {
                 Text("DISCARD", color = Color.Gray.copy(alpha = 0.6f), fontWeight = FontWeight.Bold)
             }
+        }
+
+        // Banner ad anchored to absolute bottom (Matching Home layout)
+        Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
+            BannerAdView()
         }
     }
 }
@@ -2155,8 +2164,13 @@ fun BannerAdView() {
 
 @Composable
 fun CleanFinishedScreen(onDone: () -> Unit) {
-    Box(modifier = Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             Surface(shape = CircleShape, color = EmeraldGreen.copy(alpha = 0.1f), modifier = Modifier.size(140.dp)) {
                 Icon(Icons.Default.Verified, null, Modifier.padding(28.dp), tint = LogoPurple)
             }
@@ -2177,6 +2191,11 @@ fun CleanFinishedScreen(onDone: () -> Unit) {
             ) {
                 Text(stringResource(R.string.action_done), fontWeight = FontWeight.Black, fontSize = 18.sp, letterSpacing = 2.sp)
             }
+        }
+
+        // Banner ad anchored to absolute bottom (Matching Home layout)
+        Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
+            BannerAdView()
         }
     }
 }
@@ -2214,7 +2233,7 @@ fun SettingsScreen(viewModel: AppViewModel) {
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(top = 16.dp, bottom = 60.dp),
+            contentPadding = PaddingValues(top = 16.dp, bottom = 80.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
         item {
@@ -2696,7 +2715,7 @@ fun HistoryScreen(
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 60.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 80.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 item {
