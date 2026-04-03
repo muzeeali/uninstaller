@@ -2313,7 +2313,7 @@ fun SettingsScreen(viewModel: AppViewModel) {
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
                     Surface(shape = CircleShape, color = Color.White.copy(alpha = 0.05f), modifier = Modifier.padding(bottom = 16.dp)) {
-                        Image(painterResource(id = R.drawable.uninstaller), null, Modifier.size(80.dp).padding(8.dp))
+                        Image(painterResource(id = R.drawable.zee_uninstaller), null, Modifier.size(80.dp).padding(8.dp))
                     }
                     Row {
                         Text("ZEE ", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = LogoPurple)

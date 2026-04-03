@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Fixing Extreme Zoom: Using explicit width and height -->
+    <!-- This forces the high-res PNG into a 100dp square container -->
+    <item
+        android:drawable="@drawable/zee_uninstaller"
+        android:gravity="center"
+        android:width="100dp"
+        android:height="100dp" />
+</layer-list>
