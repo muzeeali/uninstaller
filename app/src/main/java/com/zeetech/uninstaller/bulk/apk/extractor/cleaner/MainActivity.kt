@@ -2287,8 +2287,18 @@ fun SettingsScreen(viewModel: AppViewModel) {
                     label = stringResource(R.string.item_rate),
                     onClick = {
                         try {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/console/u/0/developers/8381881514749219665/app/4976725838031557021/main-store-listing"))
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=${context.packageName}")).apply {
+                                setPackage("com.android.vending")
+                            }
                             context.startActivity(intent)
+                        } catch (e: android.content.ActivityNotFoundException) {
+                            try {
+                                val anyStoreIntent = Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=${context.packageName}"))
+                                context.startActivity(anyStoreIntent)
+                            } catch (e2: android.content.ActivityNotFoundException) {
+                                val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=${context.packageName}"))
+                                context.startActivity(webIntent)
+                            }
                         } catch (e: Exception) {}
                     }
                 )
