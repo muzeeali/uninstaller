@@ -252,4 +252,5 @@ object AdManager {
     }
 
     fun isRewardedReady() = rewardedAd != null
+    fun isInterstitialReady() = interstitialAd != null
 }

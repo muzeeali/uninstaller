@@ -128,9 +128,6 @@ class MainActivity : ComponentActivity() {
 
         // Initialize AdMob SDK
         AdManager.initialize(this)
-
-        // Show App Open ad on cold start (compliant launch monetization)
-        AdManager.showAppOpenAdIfAvailable()
         
         // Automated Surgical Scan on Launch
         if (viewModel.scanOnLaunch.value && viewModel.hasAllFilesAccess()) {
@@ -945,7 +942,9 @@ fun UninstallerApp(
     // ── Rewarded ad dialog state ─────────────────────────────────────────────
     var showBulkAdDialog by remember { mutableStateOf(false) }
     var showAdLoader by remember { mutableStateOf(false) }
+    var adLoaderText by remember { mutableStateOf("Loading Ad...") }
     var pendingBulkAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var pendingInterstitialAction by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     if (showBulkAdDialog) {
         androidx.compose.material3.AlertDialog(
@@ -1031,20 +1030,53 @@ fun UninstallerApp(
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                     androidx.compose.material3.CircularProgressIndicator(color = EmeraldGreen)
                     Spacer(modifier = Modifier.height(16.dp))
-                    Text("Loading Ad...", fontWeight = FontWeight.Bold)
+                    Text(adLoaderText, fontWeight = FontWeight.Bold)
                 }
             },
             text = {
-                Text("Trying to load a rewarded ad. Please wait a moment...", textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                Text("Trying to load a high-quality ad for you. Please wait a moment...", textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
             },
             shape = RoundedCornerShape(24.dp)
         )
     }
 
+    // ── Interstitial ad loader logic ─────────────────────────────────────────
+    if (pendingInterstitialAction != null) {
+        val action = pendingInterstitialAction!!
+        LaunchedEffect(Unit) {
+            showAdLoader = true
+            adLoaderText = "Preparing Premium Feature..."
+            
+            val timeoutMillis = 3500L
+            val startTime = System.currentTimeMillis()
+            
+            while (System.currentTimeMillis() - startTime < timeoutMillis) {
+                if (AdManager.isInterstitialReady()) {
+                    showAdLoader = false
+                    AdManager.showInterstitial(
+                        force = true,
+                        onDismiss = {
+                            action()
+                            pendingInterstitialAction = null
+                        }
+                    )
+                    return@LaunchedEffect
+                }
+                kotlinx.coroutines.delay(200)
+            }
+            
+            // Timeout: Show screen anyway to avoid blocking user 
+            showAdLoader = false
+            action()
+            pendingInterstitialAction = null
+        }
+    }
+
     BackHandler(enabled = currentScreen != "home") {
-        // Exit ad (Cooldown active)
-        AdManager.showInterstitial()
-        currentScreen = "home"
+        // Exit ad (Cooldown active) -> Transition only after dismissal
+        AdManager.showInterstitial(onDismiss = {
+            currentScreen = "home"
+        })
     }
 
     Scaffold(
@@ -1059,13 +1091,14 @@ fun UninstallerApp(
                     isDarkTheme = isDarkTheme,
                     onThemeToggle = onThemeToggle,
                     onSettingsClick = {
-                        // Exit/Home ad (Cooldown active)
-                        AdManager.showInterstitial()
-                        currentScreen = when (currentScreen) {
-                            "home" -> "settings"
-                            "history" -> "home"
-                            else -> "home"
-                        }
+                        // Exit/Home ad (Cooldown active) -> Transition only after dismissal
+                        AdManager.showInterstitial(onDismiss = {
+                            currentScreen = when (currentScreen) {
+                                "home" -> "settings"
+                                "history" -> "home"
+                                else -> "home"
+                            }
+                        })
                     },
                     showSettings = currentScreen == "home",
                     // Home: Refresh + History | Settings: Share + History | History: Refresh + Settings
@@ -1090,8 +1123,11 @@ fun UninstallerApp(
                     }} else null,
                     onSettingsNav = if (currentScreen == "history") {{ currentScreen = "settings" }} else null,
                     onHistory = if (currentScreen != "history") {{
-                        AdManager.showInterstitial(force = true)
-                        currentScreen = "history"
+                        if (AdManager.isInterstitialReady()) {
+                            AdManager.showInterstitial(force = true, onDismiss = { currentScreen = "history" })
+                        } else {
+                            pendingInterstitialAction = { currentScreen = "history" }
+                        }
                     }} else null
                 )
             }
@@ -1146,10 +1182,12 @@ fun UninstallerApp(
                                 viewModel.refreshList() 
                                 AdManager.onRefreshTapped()
                             },
-                            onExtract = { 
-                                // Premium Feature: Bypass cooldown
-                                AdManager.showInterstitial(force = true)
-                                viewModel.extractApk(it, haptics) 
+                            onExtract = { app ->
+                                if (AdManager.isInterstitialReady()) {
+                                    AdManager.showInterstitial(force = true, onDismiss = { viewModel.extractApk(app, haptics) })
+                                } else {
+                                    pendingInterstitialAction = { viewModel.extractApk(app, haptics) }
+                                }
                             },
                             onBulkUninstall = { apps, doUninstall ->
                                 if (apps.size <= 1 && AdManager.rewardedUnlockActive) {
