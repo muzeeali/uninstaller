@@ -74,6 +74,7 @@ import com.zeetech.uninstaller.bulk.apk.extractor.cleaner.ui.theme.UninstallerTh
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -931,6 +932,7 @@ fun UninstallerApp(
 
     // ── Rewarded ad dialog state ─────────────────────────────────────────────
     var showBulkAdDialog by remember { mutableStateOf(false) }
+    var showAdLoader by remember { mutableStateOf(false) }
     var pendingBulkAction by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     if (showBulkAdDialog) {
@@ -953,13 +955,17 @@ fun UninstallerApp(
                 Button(
                     onClick = {
                         showBulkAdDialog = false
-                        AdManager.showRewarded(
-                            onRewardEarned = {
-                                pendingBulkAction?.invoke()
-                                pendingBulkAction = null
-                            },
-                            onDismiss = { pendingBulkAction = null }
-                        )
+                        if (AdManager.isRewardedReady()) {
+                            AdManager.showRewarded(
+                                onRewardEarned = {
+                                    pendingBulkAction?.invoke()
+                                    pendingBulkAction = null
+                                },
+                                onDismiss = { pendingBulkAction = null }
+                            )
+                        } else {
+                            showAdLoader = true
+                        }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
                     shape = RoundedCornerShape(12.dp)
@@ -971,6 +977,53 @@ fun UninstallerApp(
                 TextButton(onClick = { showBulkAdDialog = false; pendingBulkAction = null }) {
                     Text("Cancel", color = Color.Gray, fontWeight = FontWeight.Black)
                 }
+            },
+            shape = RoundedCornerShape(24.dp)
+        )
+    }
+    
+    // ── Rewarded Failover Loader (Option B: Gold Standard) ────────────────────
+    if (showAdLoader) {
+        // Trigger ad load just in case it wasn't fetching
+        LaunchedEffect(Unit) {
+            // Wait up to 3.5 seconds
+            val timeoutMillis = 3500L
+            val startTime = System.currentTimeMillis()
+            
+            while (System.currentTimeMillis() - startTime < timeoutMillis) {
+                if (AdManager.isRewardedReady()) {
+                    showAdLoader = false
+                    AdManager.showRewarded(
+                        onRewardEarned = {
+                            pendingBulkAction?.invoke()
+                            pendingBulkAction = null
+                        },
+                        onDismiss = { pendingBulkAction = null }
+                    )
+                    return@LaunchedEffect
+                }
+                kotlinx.coroutines.delay(200) // Poll for ad readiness
+            }
+            
+            // Timeout reached: Proceed anyway (Graceful Fallback)
+            showAdLoader = false
+            android.widget.Toast.makeText(context, "Network slow. Proceeding for free!", android.widget.Toast.LENGTH_SHORT).show()
+            pendingBulkAction?.invoke()
+            pendingBulkAction = null
+        }
+
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { /* Modal: force wait or timeout */ },
+            confirmButton = {},
+            title = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                    androidx.compose.material3.CircularProgressIndicator(color = EmeraldGreen)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("Loading Ad...", fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Text("Trying to load a rewarded ad. Please wait a moment...", textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
             },
             shape = RoundedCornerShape(24.dp)
         )
@@ -1127,7 +1180,7 @@ fun LoadingScreen() {
                 trackColor = LogoPurple.copy(alpha = 0.1f)
             )
             Spacer(modifier = Modifier.height(24.dp))
-            Row {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(stringResource(R.string.state_analyzing), fontWeight = FontWeight.Black, color = LogoPurple)
                 Text(stringResource(R.string.state_system), fontWeight = FontWeight.Black, color = EmeraldGreen)
             }
@@ -1141,7 +1194,7 @@ fun EmptyStateScreen(onRetry: () -> Unit) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(Icons.Default.SearchOff, null, Modifier.size(80.dp), tint = EmeraldGreen.copy(alpha = 0.3f))
             Spacer(modifier = Modifier.height(24.dp))
-            Row {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(stringResource(R.string.state_no_apps), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black, color = LogoPurple)
                 Text(stringResource(R.string.state_found), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black, color = EmeraldGreen)
             }
@@ -1216,20 +1269,20 @@ fun UninstallerTopBar(
             when (title) {
                 "UNINSTALLER" -> {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("UNINSTALLE", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 1.sp)
-                        Text("R", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 1.sp)
+                        Text("ZEE ", fontSize = 18.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.5.sp)
+                        Text("UNINSTALLER", fontSize = 18.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.5.sp)
                     }
                 }
                 "SETTINGS" -> {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("SETTING", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 1.sp)
-                        Text("S", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 1.sp)
+                        Text("ZEE ", fontSize = 18.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.5.sp)
+                        Text("SETTINGS", fontSize = 18.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.5.sp)
                     }
                 }
                 "HISTORY" -> {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("HISTOR", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 1.sp)
-                        Text("Y", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 1.sp)
+                        Text("ZEE ", fontSize = 18.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.5.sp)
+                        Text("HISTORY", fontSize = 18.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.5.sp)
                     }
                 }
                 else -> {
@@ -2035,12 +2088,12 @@ fun BulkActionBar(count: Int, reclaimedSpace: String, isAdUnlocked: Boolean, onU
                 colors = ButtonDefaults.buttonColors(containerColor = containerColor, contentColor = Color.White),
                 shape = RoundedCornerShape(16.dp),
                 elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
             ) {
                 if (!isAdUnlocked) {
                     Icon(Icons.Default.PlayCircle, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Watch Ad\n& Uninstall", fontWeight = FontWeight.Bold, textAlign = TextAlign.End, lineHeight = 14.sp)
+                    Text("Watch Ad\n& Uninstall", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, lineHeight = 14.sp)
                 } else {
                     Text(stringResource(R.string.action_uninstall), fontWeight = FontWeight.Bold)
                 }
@@ -2247,8 +2300,8 @@ fun SettingsScreen(viewModel: AppViewModel) {
                         Image(painterResource(id = R.drawable.uninstaller), null, Modifier.size(80.dp).padding(8.dp))
                     }
                     Row {
-                        Text("UNINSTALLE", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = LogoPurple)
-                        Text("R", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, color = EmeraldGreen)
+                        Text("ZEE ", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = LogoPurple)
+                        Text("UNINSTALLER", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = EmeraldGreen)
                     }
                     Text(stringResource(R.string.subtitle_precision), fontStyle = androidx.compose.ui.text.font.FontStyle.Italic, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(modifier = Modifier.height(12.dp))
@@ -2522,7 +2575,7 @@ fun SettingsScreen(viewModel: AppViewModel) {
                     onClick = {
                         val intent = Intent(Intent.ACTION_SENDTO).apply {
                             data = Uri.parse("mailto:muzeeali8@gmail.com")
-                            putExtra(Intent.EXTRA_SUBJECT, "Uninstaller App Feedback")
+                            putExtra(Intent.EXTRA_SUBJECT, "Zee Uninstaller App Feedback")
                         }
                         try {
                             context.startActivity(intent)

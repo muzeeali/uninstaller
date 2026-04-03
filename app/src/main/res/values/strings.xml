@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Uninstaller</string>
+    <string name="app_name">Zee Uninstaller</string>
     <string name="content_refresh">Refresh</string>
     <string name="content_toggle_theme">Toggle Theme</string>
     <string name="content_navigate">Navigate</string>
@@ -46,9 +46,9 @@
     <string name="action_extract_apk">EXTRACT APK</string>
     <string name="action_share">SHARE</string>
     
-    <string name="state_analyzing">ANALYZING </string>
+    <string name="state_analyzing">ANALYZING</string>
     <string name="state_system">SYSTEM…</string>
-    <string name="state_no_apps">NO APPS </string>
+    <string name="state_no_apps">NO APPS</string>
     <string name="state_found">FOUND</string>
     <string name="state_scan_retry">Try scanning again or check permissions.</string>
     <string name="action_scan_again">SCAN AGAIN</string>
@@ -115,7 +115,7 @@
     <string name="info_never">Never</string>
     <string name="notif_storage_low_title">⚠️ Storage Critical — %1$d%% Used</string>
     <string name="notif_storage_low_text">Only %1$s free (%2$d%%). Tap to reclaim space.</string>
-    <string name="notif_storage_low_big_text">Your storage is %1$d%% full.\nUsed: %2$s   ·   Free: %3$s (%4$d%%)\n\nOpen Uninstaller to remove unused apps and free space.</string>
-    <string name="share_app_text">Check out Uninstaller! It helps you manage apps and free up space with precision: https://play.google.com/store/apps/details?id=%1$s</string>
-    <string name="share_specific_app">🚀 Check out %1$s: https://play.google.com/store/apps/details?id=%2$s\n\n📦 Shared via Uninstaller — The fastest way to uninstall multiple apps and reclaim storage: https://play.google.com/store/apps/details?id=%3$s</string>
+    <string name="notif_storage_low_big_text">Your storage is %1$d%% full.\nUsed: %2$s   ·   Free: %3$s (%4$d%%)\n\nOpen Zee Uninstaller to remove unused apps and free space.</string>
+    <string name="share_app_text">Check out Zee Uninstaller! It helps you manage apps and free up space with precision: https://play.google.com/store/apps/details?id=%1$s</string>
+    <string name="share_specific_app">🚀 Check out %1$s: https://play.google.com/store/apps/details?id=%2$s\n\n📦 Shared via Zee Uninstaller — The fastest way to uninstall multiple apps and reclaim storage: https://play.google.com/store/apps/details?id=%3$s</string>
 </resources>
