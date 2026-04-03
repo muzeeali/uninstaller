@@ -11,6 +11,8 @@ composeBom = "2025.07.00"
 googleServices = "4.4.2"
 firebaseCrashlyticsPlugin = "3.0.3"
 firebaseBom = "33.10.0"
+playAppUpdate = "2.1.0"
+
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -36,6 +38,9 @@ firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.r
 firebase-analytics = { group = "com.google.firebase", name = "firebase-analytics" }
 firebase-crashlytics = { group = "com.google.firebase", name = "firebase-crashlytics" }
 firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging" }
+firebase-config = { group = "com.google.firebase", name = "firebase-config-ktx" }
+play-app-update = { group = "com.google.android.play", name = "app-update-ktx", version.ref = "playAppUpdate" }
+
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

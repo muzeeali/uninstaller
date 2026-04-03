@@ -1,5 +1,7 @@
 package com.zeetech.uninstaller.bulk.apk.extractor.cleaner
 
+import android.util.Log
+
 import android.app.AppOpsManager
 import android.app.AppOpsManager.MODE_ALLOWED
 import android.app.AppOpsManager.OPSTR_GET_USAGE_STATS
@@ -88,10 +90,12 @@ import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
 import android.view.ViewGroup
 import androidx.compose.ui.viewinterop.AndroidView
+import com.google.android.play.core.install.model.ActivityResult
 
 class MainActivity : ComponentActivity() {
     private lateinit var viewModel: AppViewModel
     private var pendingHistoryApp: AppInfo? = null
+    lateinit var updateManager: UpdateManager
 
     private val uninstallLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -137,6 +141,9 @@ class MainActivity : ComponentActivity() {
             viewModel.startDeepClean()
         }
 
+        // Initialize Update Manager
+        updateManager = UpdateManager(this)
+
         // Initialize WorkManager manually (default disabled in Manifest to prevent crash)
         try {
             WorkManager.initialize(
@@ -155,6 +162,7 @@ class MainActivity : ComponentActivity() {
         }
         
         enableEdgeToEdge()
+
         setContent {
             var darkTheme by rememberSaveable { mutableStateOf(true) }
             
@@ -217,10 +225,26 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == UpdateManager.UPDATE_REQUEST_CODE) {
+            if (resultCode != RESULT_OK) {
+                Log.e("MainActivity", "Update flow failed! Result code: $resultCode")
+                // If an immediate update is cancelled or fails, 
+                // we will re-check it in onResume to force the user back into the flow.
+            }
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         // Refresh AdManager's weak reference to Activity on every resume
         AdManager.bindActivity(this)
+
+        // Resume any ongoing IMMEDIATE updates (Google Play)
+        if (::updateManager.isInitialized) {
+            updateManager.checkOngoingUpdate(this)
+        }
         // Icons are now preserved on disk and handled by Coil.
     }
 
@@ -928,6 +952,25 @@ fun UninstallerApp(
     val currentUiState = viewModel.uiState.collectAsState().value
     val context = LocalContext.current
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+    
+    // ── Update System States ────────────────────────────────────────────────
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var updateUrl by remember { mutableStateOf("") }
+    var isUpdateReady by remember { mutableStateOf(false) }
+    var isMandatoryUpdate by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        val activity = context as? MainActivity ?: return@LaunchedEffect
+        activity.updateManager.checkForUpdates(
+            activity = activity,
+            onFlexibleUpdateDownloaded = { isUpdateReady = true },
+            onManualUpdateAvailable = { url, isMandatory ->
+                updateUrl = url
+                isMandatoryUpdate = isMandatory
+                showUpdateDialog = true
+            }
+        )
+    }
 
     // ── Ad triggers on screen transitions ───────────────────────────────────
     LaunchedEffect(currentScreen) {
@@ -1041,6 +1084,76 @@ fun UninstallerApp(
         )
     }
 
+    // ── Update Available Dialog (Fallback Path) ──────────────────────────────
+    if (showUpdateDialog) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { if (!isMandatoryUpdate) showUpdateDialog = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            icon = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    // Show App Logo
+                    Image(
+                        painter = painterResource(id = R.drawable.zee_uninstaller),
+                        contentDescription = null,
+                        modifier = Modifier.size(64.dp).clip(RoundedCornerShape(12.dp))
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Icon(Icons.Default.SystemUpdate, null, tint = EmeraldGreen, modifier = Modifier.size(32.dp))
+                }
+            },
+            title = {
+                Text(
+                    if (isMandatoryUpdate) "Critical Update Required!" else "New Update Available!",
+                    fontWeight = FontWeight.Black,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            text = {
+                Text(
+                    if (isMandatoryUpdate) 
+                        "This version has critical improvements. You must update to the latest version to continue using the app."
+                    else 
+                        "A new version of Uninstaller is ready. Update now to get the latest features and security improvements.",
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val activity = context as? MainActivity
+                        activity?.updateManager?.launchUpdateUrl(activity, updateUrl)
+                        // Don't close dialog if mandatory, force user to go to store
+                        if (!isMandatoryUpdate) showUpdateDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                ) {
+                    Text("UPDATE NOW", fontWeight = FontWeight.Black)
+                }
+            },
+            dismissButton = {
+                if (!isMandatoryUpdate) {
+                    TextButton(
+                        onClick = { showUpdateDialog = false },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("LATER", color = Color.Gray, fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            shape = RoundedCornerShape(28.dp),
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                dismissOnBackPress = !isMandatoryUpdate,
+                dismissOnClickOutside = !isMandatoryUpdate
+            ),
+            modifier = Modifier.padding(24.dp)
+        )
+    }
+
     BackHandler(enabled = currentScreen != "home") {
         // Exit ad (Cooldown active)
         AdManager.showInterstitial()
@@ -1048,6 +1161,25 @@ fun UninstallerApp(
     }
 
     Scaffold(
+        snackbarHost = {
+            if (isUpdateReady) {
+                Snackbar(
+                    modifier = Modifier.padding(16.dp),
+                    action = {
+                        TextButton(onClick = { 
+                            (context as? MainActivity)?.updateManager?.completeUpdate() 
+                        }) {
+                            Text("RESTART", color = EmeraldGreen, fontWeight = FontWeight.Black)
+                        }
+                    },
+                    containerColor = Charcoal,
+                    contentColor = Color.White,
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Update downloaded and ready to install!")
+                }
+            }
+        },
         topBar = {
             if (currentUiState !is AppUiState.Scanning && currentUiState !is AppUiState.CleanSummary) {
                 UninstallerTopBar(

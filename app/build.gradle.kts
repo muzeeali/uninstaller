@@ -12,8 +12,8 @@ android {
         applicationId = "com.zeetech.uninstaller.bulk.apk.extractor.cleaner"
         minSdk = 24
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 4
+        versionName = "1.0.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -66,7 +66,10 @@ dependencies {
     implementation(libs.firebase.analytics)
     implementation(libs.firebase.crashlytics)
     implementation(libs.firebase.messaging)
+    implementation(libs.firebase.config)
 
     // AdMob
     implementation("com.google.android.gms:play-services-ads:23.6.0")
+    // App Updates
+    implementation(libs.play.app.update)
 }
