@@ -79,6 +79,11 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import com.google.android.gms.ads.AdRequest
+import com.google.android.gms.ads.AdSize
+import com.google.android.gms.ads.AdView
+import android.view.ViewGroup
+import androidx.compose.ui.viewinterop.AndroidView
 
 class MainActivity : ComponentActivity() {
     private lateinit var viewModel: AppViewModel
@@ -93,6 +98,8 @@ class MainActivity : ComponentActivity() {
             viewModel.refreshList { isGone ->
                 if (isGone) {
                     pendingHistoryApp?.let { app -> viewModel.addToHistory(app) }
+                    // Show interstitial after confirmed single uninstall
+                    AdManager.showInterstitial()
                 }
                 pendingHistoryApp = null
             }
@@ -105,6 +112,12 @@ class MainActivity : ComponentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         viewModel = ViewModelProvider(this)[AppViewModel::class.java]
+
+        // Initialize AdMob SDK
+        AdManager.initialize(this)
+
+        // Show App Open ad on cold start (compliant launch monetization)
+        AdManager.showAppOpenAdIfAvailable()
         
         // Automated Surgical Scan on Launch
         if (viewModel.scanOnLaunch.value && viewModel.hasAllFilesAccess()) {
@@ -193,6 +206,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Refresh AdManager's weak reference to Activity on every resume
+        AdManager.bindActivity(this)
         // Icons are now preserved on disk and handled by Coil.
     }
 
@@ -896,11 +911,75 @@ fun UninstallerApp(
     onRequestStoragePermission: () -> Unit
 ) {
     var currentScreen by rememberSaveable { mutableStateOf("home") }
+    var prevScreen by rememberSaveable { mutableStateOf("home") }
     val currentUiState = viewModel.uiState.collectAsState().value
     val context = LocalContext.current
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
 
+    // ── Ad triggers on screen transitions ───────────────────────────────────
+    LaunchedEffect(currentScreen) {
+        // Interstitial: every time user exits the History tab
+        if (prevScreen == "history" && currentScreen == "home") {
+            AdManager.showInterstitial()
+        }
+        // Interstitial: first time per session when exiting Settings
+        if (prevScreen == "settings" && currentScreen == "home") {
+            AdManager.onExitedSettings()
+        }
+        prevScreen = currentScreen
+    }
+
+    // ── Rewarded ad dialog state ─────────────────────────────────────────────
+    var showBulkAdDialog by remember { mutableStateOf(false) }
+    var pendingBulkAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    if (showBulkAdDialog) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showBulkAdDialog = false },
+            icon = {
+                Icon(Icons.Default.Star, null, tint = EmeraldGreen, modifier = Modifier.size(32.dp))
+            },
+            title = {
+                Text("Bulk Uninstall", fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
+            },
+            text = {
+                Text(
+                    "Bulk uninstall is a premium feature.\nWatch a short ad to unlock it for this session.",
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showBulkAdDialog = false
+                        AdManager.showRewarded(
+                            onRewardEarned = {
+                                pendingBulkAction?.invoke()
+                                pendingBulkAction = null
+                            },
+                            onDismiss = { pendingBulkAction = null }
+                        )
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Watch Ad", fontWeight = FontWeight.Black)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBulkAdDialog = false; pendingBulkAction = null }) {
+                    Text("Cancel", color = Color.Gray, fontWeight = FontWeight.Black)
+                }
+            },
+            shape = RoundedCornerShape(24.dp)
+        )
+    }
+
     BackHandler(enabled = currentScreen != "home") {
+        if (currentScreen == "settings" || currentScreen == "history") {
+            AdManager.showInterstitial()
+        }
         currentScreen = "home"
     }
 
@@ -916,6 +995,9 @@ fun UninstallerApp(
                     isDarkTheme = isDarkTheme,
                     onThemeToggle = onThemeToggle,
                     onSettingsClick = {
+                        if (currentScreen == "settings" || currentScreen == "history") {
+                            AdManager.showInterstitial()
+                        }
                         currentScreen = when (currentScreen) {
                             "home" -> "settings"
                             "history" -> "home"
@@ -925,8 +1007,14 @@ fun UninstallerApp(
                     showSettings = currentScreen == "home",
                     // Home: Refresh + History | Settings: Share + History | History: Refresh + Settings
                     onRefresh = when (currentScreen) {
-                        "home" -> {{ viewModel.refreshList() }}
-                        "history" -> {{ viewModel.refreshHistory() }}
+                        "home" -> {{
+                            viewModel.refreshList()
+                            AdManager.onRefreshTapped()
+                        }}
+                        "history" -> {{ 
+                            viewModel.refreshHistory()
+                            AdManager.onRefreshTapped()
+                        }}
                         else -> null
                     },
                     onShareApp = if (currentScreen == "settings") {{
@@ -954,7 +1042,12 @@ fun UninstallerApp(
                     onClean = { viewModel.performCleanup(haptics) },
                     onCancel = { viewModel.backToHome() }
                 )
-                is AppUiState.CleanFinished -> CleanFinishedScreen { viewModel.backToHome() }
+                is AppUiState.CleanFinished -> {
+                    LaunchedEffect(Unit) {
+                        AdManager.showInterstitial()
+                    }
+                    CleanFinishedScreen { viewModel.backToHome() }
+                }
                 is AppUiState.Success -> {
                     val sortBy by viewModel.sortBy.collectAsState()
                     val isAscending by viewModel.isAscending.collectAsState()
@@ -983,8 +1076,26 @@ fun UninstallerApp(
                                     viewModel.startDeepClean()
                                 }
                             },
-                            onRefresh = { viewModel.refreshList() },
-                            onExtract = { viewModel.extractApk(it, haptics) }
+                            onRefresh = { 
+                                viewModel.refreshList() 
+                                AdManager.onRefreshTapped()
+                            },
+                            onExtract = { 
+                                AdManager.showInterstitial()
+                                viewModel.extractApk(it, haptics) 
+                            },
+                            onBulkUninstall = { apps, doUninstall ->
+                                if (apps.size <= 1 && AdManager.rewardedUnlockActive) {
+                                    doUninstall()
+                                } else {
+                                    pendingBulkAction = doUninstall
+                                    showBulkAdDialog = true
+                                }
+                            },
+                            isBulkAdUnlocked = AdManager.rewardedUnlockActive,
+                            onTabSwitched = { AdManager.onTabSwitched() },
+                            onSelectAll = { AdManager.showInterstitial() },
+                            onSelectionChanged = { count -> AdManager.onSelectionChanged(count) }
                         )
                     } else if (currentScreen == "history") {
                         val history by viewModel.uninstalledHistory.collectAsState()
@@ -1003,6 +1114,7 @@ fun UninstallerApp(
         }
     }
 }
+
 
 @Composable
 fun LoadingScreen() {
@@ -1159,12 +1271,25 @@ fun HomeScreen(
     onUninstallRequest: (AppInfo) -> Unit,
     onDeepCleanStart: () -> Unit,
     onRefresh: () -> Unit,
-    onExtract: (AppInfo) -> Unit
+    onExtract: (AppInfo) -> Unit,
+    onBulkUninstall: (List<AppInfo>, () -> Unit) -> Unit = { _, action -> action() },
+    isBulkAdUnlocked: Boolean,
+    onTabSwitched: () -> Unit = {},
+    onSelectAll: () -> Unit = {},
+    onSelectionChanged: (Int) -> Unit = {}
 ) {
     var searchQuery by remember { mutableStateOf("") }
     val selectedApps = remember { mutableStateListOf<AppInfo>() }
     val pagerState = rememberPagerState(pageCount = { 2 })
+    var previousPage by remember { mutableIntStateOf(0) }
     val coroutineScope = rememberCoroutineScope()
+    
+    LaunchedEffect(pagerState.currentPage) {
+        if (pagerState.currentPage != previousPage) {
+            onTabSwitched()
+            previousPage = pagerState.currentPage
+        }
+    }
     
     var showSortMenu by remember { mutableStateOf(false) }
 
@@ -1357,6 +1482,7 @@ fun HomeScreen(
                             else {
                                 selectedApps.clear()
                                 selectedApps.addAll(currentVisibleApps)
+                                onSelectAll() // fire interstitial ad on Select All
                             }
                         },
                         colors = CheckboxDefaults.colors(checkedColor = EmeraldGreen, uncheckedColor = Color.Gray.copy(alpha = 0.5f)),
@@ -1388,7 +1514,10 @@ fun HomeScreen(
                                 .fillMaxHeight()
                                 .clip(RoundedCornerShape(16.dp))
                                 .background(if (isSelected) EmeraldGreen else Color.Transparent)
-                                .clickable { coroutineScope.launch { pagerState.animateScrollToPage(index) } },
+                                .clickable {
+                                    coroutineScope.launch { pagerState.animateScrollToPage(index) }
+                                    if (!isSelected) onTabSwitched() // fire interstitial on tab switch
+                                },
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -1428,7 +1557,13 @@ fun HomeScreen(
                                 app = app,
                                 isIconCached = cachedIcons.contains(app.packageName),
                                 isSelected = isSelected,
-                                onToggle = { if (isSelected) selectedApps.remove(app) else selectedApps.add(app) },
+                                onToggle = {
+                                    if (isSelected) selectedApps.remove(app)
+                                    else {
+                                        selectedApps.add(app)
+                                        onSelectionChanged(selectedApps.size)
+                                    }
+                                },
                                 onMenuClick = { appActionToShow = app }
                             )
                         }
@@ -1443,7 +1578,7 @@ fun HomeScreen(
                 onClick = onDeepCleanStart,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(bottom = 16.dp, end = 16.dp),
+                    .padding(bottom = 70.dp, end = 16.dp),
                 containerColor = EmeraldGreen,
                 contentColor = Color.White,
                 shape = RoundedCornerShape(16.dp)
@@ -1456,19 +1591,37 @@ fun HomeScreen(
             }
         }
         
-        // 6. Bulk Action Bar (At the absolute bottom)
+        // 6. Banner Ad — always visible at absolute bottom when no bulk bar
+        if (selectedApps.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+            ) {
+                BannerAdView()
+            }
+        }
+
+        // 7. Bulk Action Bar (At the absolute bottom)
         if (selectedApps.isNotEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
                 val currentVisibleApps = if (pagerState.currentPage == 0) userApps else systemApps
                 BulkActionBar(
                     count = selectedApps.size,
                     reclaimedSpace = formatSize(selectedApps.sumOf { it.sizeBytes }),
-                    onUninstall = { selectedApps.forEach { onUninstallRequest(it) } },
+                    isAdUnlocked = selectedApps.size <= 1 && isBulkAdUnlocked,
+                    onUninstall = {
+                        val appsToUninstall = selectedApps.toList()
+                        onBulkUninstall(appsToUninstall) {
+                            appsToUninstall.forEach { onUninstallRequest(it) }
+                        }
+                    },
                     onSelectAll = {
                         if (selectedApps.size == currentVisibleApps.size) selectedApps.clear()
                         else {
                             selectedApps.clear()
                             selectedApps.addAll(currentVisibleApps)
+                            onSelectAll()
                         }
                     },
                     isAllSelected = selectedApps.size >= currentVisibleApps.size && currentVisibleApps.isNotEmpty()
@@ -1850,13 +2003,13 @@ fun ActionMenuItem(icon: ImageVector, label: String, color: Color, onClick: () -
 }
 
 @Composable
-fun BulkActionBar(count: Int, reclaimedSpace: String, onUninstall: () -> Unit, onSelectAll: () -> Unit, isAllSelected: Boolean) {
+fun BulkActionBar(count: Int, reclaimedSpace: String, isAdUnlocked: Boolean, onUninstall: () -> Unit, onSelectAll: () -> Unit, isAllSelected: Boolean) {
     Surface(
         modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
         color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(24.dp),
         shadowElevation = 16.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, LogoPurple.copy(alpha = 0.2f))
+        border = androidx.compose.foundation.BorderStroke(1.dp, if (isAdUnlocked) LogoPurple.copy(alpha = 0.2f) else EmeraldGreen.copy(alpha = 0.4f))
     ) {
         Row(
             modifier = Modifier.padding(16.dp),
@@ -1877,13 +2030,21 @@ fun BulkActionBar(count: Int, reclaimedSpace: String, onUninstall: () -> Unit, o
                 )
             }
             
+            val containerColor = if (isAdUnlocked) LogoPurple else EmeraldGreen
             Button(
                 onClick = onUninstall,
-                colors = ButtonDefaults.buttonColors(containerColor = LogoPurple, contentColor = Color.White),
+                colors = ButtonDefaults.buttonColors(containerColor = containerColor, contentColor = Color.White),
                 shape = RoundedCornerShape(16.dp),
-                elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
             ) {
-                Text(stringResource(R.string.action_uninstall), fontWeight = FontWeight.Bold)
+                if (!isAdUnlocked) {
+                    Icon(Icons.Default.PlayCircle, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Watch Ad\n& Uninstall", fontWeight = FontWeight.Bold, textAlign = TextAlign.End, lineHeight = 14.sp)
+                } else {
+                    Text(stringResource(R.string.action_uninstall), fontWeight = FontWeight.Bold)
+                }
             }
         }
     }
@@ -1922,6 +2083,9 @@ fun DeepCleanProgressScreen(progress: Float, currentTask: String) {
                 color = EmeraldGreen,
                 trackColor = LogoPurple.copy(alpha = 0.1f)
             )
+            Spacer(modifier = Modifier.height(32.dp))
+            // Banner ad — user is idle during scan, non-intrusive placement
+            BannerAdView()
         }
     }
 }
@@ -1942,9 +2106,16 @@ fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, on
             Text(space, fontSize = 56.sp, fontWeight = FontWeight.Black, color = LogoPurple)
             Text("from $itemsCount cached zones", style = MaterialTheme.typography.bodyMedium, color = EmeraldGreen, fontWeight = FontWeight.Bold)
             
-            Spacer(modifier = Modifier.height(48.dp))
+            Spacer(modifier = Modifier.height(32.dp))
+            // Banner ad — user is idle reviewing results, great monetization moment
+            BannerAdView()
+            Spacer(modifier = Modifier.height(16.dp))
+
             Button(
-                onClick = onClean, 
+                onClick = {
+                    AdManager.showInterstitial()
+                    onClean()
+                }, 
                 modifier = Modifier.fillMaxWidth().height(60.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
                 shape = RoundedCornerShape(16.dp),
@@ -1958,6 +2129,28 @@ fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, on
             }
         }
     }
+}
+
+// ─── Reusable Banner Ad Composable ──────────────────────────────────────────
+@Composable
+fun BannerAdView() {
+    AndroidView(
+        modifier = Modifier
+            .fillMaxWidth(), // Removed fixed height so adaptive sizing can take over
+        factory = { context ->
+            AdView(context).apply {
+                val displayMetrics = context.resources.displayMetrics
+                val adWidth = (displayMetrics.widthPixels / displayMetrics.density).toInt()
+                setAdSize(AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(context, adWidth))
+                adUnitId = "ca-app-pub-6425054459696619/9326445462"
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+                loadAd(AdRequest.Builder().build())
+            }
+        }
+    )
 }
 
 @Composable
@@ -2018,10 +2211,12 @@ fun SettingsScreen(viewModel: AppViewModel) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+            contentPadding = PaddingValues(top = 16.dp, bottom = 60.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
         item {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -2348,6 +2543,16 @@ fun SettingsScreen(viewModel: AppViewModel) {
             Spacer(modifier = Modifier.height(32.dp))
         }
     }
+    
+    // Banner Ad at absolute bottom
+    Box(
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .fillMaxWidth()
+    ) {
+        BannerAdView()
+    }
+    }
 }
 
 @Composable
@@ -2491,7 +2696,7 @@ fun HistoryScreen(
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 60.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 item {
@@ -2519,6 +2724,15 @@ fun HistoryScreen(
                     }
                 }
             }
+        }
+        
+        // Banner Ad at absolute bottom
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+        ) {
+            BannerAdView()
         }
     }
 }

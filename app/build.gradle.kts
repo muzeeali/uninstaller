@@ -64,4 +64,7 @@ dependencies {
     implementation(libs.firebase.analytics)
     implementation(libs.firebase.crashlytics)
     implementation(libs.firebase.messaging)
+
+    // AdMob
+    implementation("com.google.android.gms:play-services-ads:23.6.0")
 }

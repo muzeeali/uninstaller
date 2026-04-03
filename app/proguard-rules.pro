@@ -63,3 +63,8 @@
 -keep class * extends androidx.room.Dao
 -dontwarn androidx.work.impl.**
 -dontwarn androidx.room.**
+
+# Google Mobile Ads (AdMob) — required to prevent stripping in release builds
+-keep class com.google.android.gms.ads.** { *; }
+-keep class com.google.android.gms.common.** { *; }
+-dontwarn com.google.android.gms.**
