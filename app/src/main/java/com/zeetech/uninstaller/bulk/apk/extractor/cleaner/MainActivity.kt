@@ -66,6 +66,9 @@ import androidx.work.WorkManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 import coil.compose.AsyncImage
 import com.zeetech.uninstaller.bulk.apk.extractor.cleaner.ui.theme.Charcoal
 import com.zeetech.uninstaller.bulk.apk.extractor.cleaner.ui.theme.EmeraldGreen
@@ -101,6 +104,8 @@ class MainActivity : ComponentActivity() {
                     pendingHistoryApp?.let { app -> viewModel.addToHistory(app) }
                     // Show interstitial after confirmed single uninstall
                     AdManager.showInterstitial()
+                    // Reset thresholds for the next session
+                    AdManager.resetSelectionThresholds()
                 }
                 pendingHistoryApp = null
             }
@@ -113,6 +118,13 @@ class MainActivity : ComponentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         viewModel = ViewModelProvider(this)[AppViewModel::class.java]
+
+        // App Open Ad - Foreground Resumption Logic
+        ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
+            override fun onStart(owner: LifecycleOwner) {
+                AdManager.showAppOpenAdIfAvailable()
+            }
+        })
 
         // Initialize AdMob SDK
         AdManager.initialize(this)
@@ -1030,9 +1042,8 @@ fun UninstallerApp(
     }
 
     BackHandler(enabled = currentScreen != "home") {
-        if (currentScreen == "settings" || currentScreen == "history") {
-            AdManager.showInterstitial()
-        }
+        // Exit ad (Cooldown active)
+        AdManager.showInterstitial()
         currentScreen = "home"
     }
 
@@ -1048,9 +1059,8 @@ fun UninstallerApp(
                     isDarkTheme = isDarkTheme,
                     onThemeToggle = onThemeToggle,
                     onSettingsClick = {
-                        if (currentScreen == "settings" || currentScreen == "history") {
-                            AdManager.showInterstitial()
-                        }
+                        // Exit/Home ad (Cooldown active)
+                        AdManager.showInterstitial()
                         currentScreen = when (currentScreen) {
                             "home" -> "settings"
                             "history" -> "home"
@@ -1079,7 +1089,10 @@ fun UninstallerApp(
                         context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.item_share)))
                     }} else null,
                     onSettingsNav = if (currentScreen == "history") {{ currentScreen = "settings" }} else null,
-                    onHistory = if (currentScreen != "history") {{ currentScreen = "history" }} else null
+                    onHistory = if (currentScreen != "history") {{
+                        AdManager.showInterstitial(force = true)
+                        currentScreen = "history"
+                    }} else null
                 )
             }
         }
@@ -1134,7 +1147,8 @@ fun UninstallerApp(
                                 AdManager.onRefreshTapped()
                             },
                             onExtract = { 
-                                AdManager.showInterstitial()
+                                // Premium Feature: Bypass cooldown
+                                AdManager.showInterstitial(force = true)
                                 viewModel.extractApk(it, haptics) 
                             },
                             onBulkUninstall = { apps, doUninstall ->
@@ -2195,22 +2209,24 @@ fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, on
 // ─── Reusable Banner Ad Composable ──────────────────────────────────────────
 @Composable
 fun BannerAdView() {
-    AndroidView(
-        modifier = Modifier
-            .fillMaxWidth(), // Removed fixed height so adaptive sizing can take over
-        factory = { context ->
-            AdView(context).apply {
-                val displayMetrics = context.resources.displayMetrics
-                val adWidth = (displayMetrics.widthPixels / displayMetrics.density).toInt()
-                setAdSize(AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(context, adWidth))
-                adUnitId = "ca-app-pub-6425054459696619/9326445462"
-                layoutParams = ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                )
-                loadAd(AdRequest.Builder().build())
-            }
+    val context = LocalContext.current
+    val adView = remember {
+        AdView(context).apply {
+            val displayMetrics = context.resources.displayMetrics
+            val adWidth = (displayMetrics.widthPixels / displayMetrics.density).toInt()
+            setAdSize(AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(context, adWidth))
+            adUnitId = "ca-app-pub-6425054459696619/9326445462"
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            loadAd(AdRequest.Builder().build())
         }
+    }
+
+    AndroidView(
+        modifier = Modifier.fillMaxWidth(),
+        factory = { adView }
     )
 }
 

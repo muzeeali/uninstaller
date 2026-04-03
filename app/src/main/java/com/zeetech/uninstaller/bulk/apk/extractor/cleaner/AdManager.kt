@@ -50,10 +50,11 @@ object AdManager {
     private var appCtx: Context? = null
     private var appOpenAd: AppOpenAd? = null
     private var appOpenAdLoading = false
-    private var appOpenShownThisLaunch = false
 
     private var interstitialAd: InterstitialAd? = null
     private var interstitialLoading = false
+    private var lastInterstitialShowTime: Long = 0
+    private const val INTERSTITIAL_COOLDOWN_MS = 180_000L // 3 Minutes
 
     private var rewardedAd: RewardedAd? = null
     private var rewardedLoading = false
@@ -97,19 +98,16 @@ object AdManager {
 
     fun showAppOpenAdIfAvailable(onDismiss: () -> Unit = {}) {
         val activity = currentActivity() ?: run { onDismiss(); return }
-        if (appOpenShownThisLaunch) { onDismiss(); return }
         val ad = appOpenAd ?: run { onDismiss(); return }
 
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
             override fun onAdDismissedFullScreenContent() {
                 appOpenAd = null
-                appOpenShownThisLaunch = true
                 loadAppOpen()
                 onDismiss()
             }
             override fun onAdFailedToShowFullScreenContent(error: AdError) {
                 appOpenAd = null
-                appOpenShownThisLaunch = true
                 loadAppOpen()
                 onDismiss()
             }
@@ -141,8 +139,18 @@ object AdManager {
         )
     }
 
-    fun showInterstitial(onDismiss: () -> Unit = {}) {
+    fun showInterstitial(onDismiss: () -> Unit = {}, force: Boolean = false) {
         val activity = currentActivity() ?: run { onDismiss(); return }
+        
+        // Smart Cooldown: Avoid spamming interstitials (3 Minutes)
+        // Bypass if this is a "Premium" forced action (Extract/History)
+        val now = System.currentTimeMillis()
+        if (!force && now - lastInterstitialShowTime < INTERSTITIAL_COOLDOWN_MS) {
+            Log.d(TAG, "Interstitial ignored: Cooldown active")
+            onDismiss()
+            return
+        }
+
         val ad = interstitialAd
         if (ad == null) {
             loadInterstitial()
@@ -152,6 +160,7 @@ object AdManager {
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
             override fun onAdDismissedFullScreenContent() {
                 interstitialAd = null
+                lastInterstitialShowTime = System.currentTimeMillis()
                 loadInterstitial()
                 onDismiss()
             }
