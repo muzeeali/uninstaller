@@ -28,3 +28,7 @@ desktop.ini
 capture.png
 *.apk
 *.aab
+
+# Firebase - never commit these to public repos
+google-services.json
+GoogleService-Info.plist
