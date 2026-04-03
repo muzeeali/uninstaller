@@ -2907,11 +2907,11 @@ fun HistoryScreen(
                 Icon(Icons.Default.DeleteForever, null, tint = Color.Red, modifier = Modifier.size(32.dp))
             },
             title = {
-                Text("Clear History?", fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
+                Text(stringResource(R.string.dialog_clear_history_title), fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
             },
             text = {
                 Text(
-                    "This will permanently remove all ${history.size} record${if (history.size != 1) "s" else ""} from your uninstall history.",
+                    stringResource(R.string.dialog_clear_history_msg),
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -2925,12 +2925,12 @@ fun HistoryScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("Clear All", fontWeight = FontWeight.Black)
+                    Text(stringResource(R.string.action_clear_all), fontWeight = FontWeight.Black)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showConfirmDialog = false }) {
-                    Text("Cancel", color = Color.Gray, fontWeight = FontWeight.Black)
+                    Text(stringResource(R.string.action_cancel), color = Color.Gray, fontWeight = FontWeight.Black)
                 }
             },
             shape = RoundedCornerShape(24.dp)
