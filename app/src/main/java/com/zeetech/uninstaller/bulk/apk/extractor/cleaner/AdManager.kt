@@ -54,7 +54,7 @@ object AdManager {
     private var interstitialAd: InterstitialAd? = null
     private var interstitialLoading = false
     private var lastInterstitialShowTime: Long = 0
-    private const val INTERSTITIAL_COOLDOWN_MS = 180_000L // 3 Minutes
+    private const val INTERSTITIAL_COOLDOWN_MS = 120_000L // 2 Minutes
 
     private var rewardedAd: RewardedAd? = null
     private var rewardedLoading = false
