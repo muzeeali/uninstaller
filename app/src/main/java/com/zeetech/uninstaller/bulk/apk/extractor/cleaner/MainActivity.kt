@@ -3,6 +3,7 @@ package com.zeetech.uninstaller.bulk.apk.extractor.cleaner
 import android.util.Log
 
 import android.app.AppOpsManager
+import android.app.Activity
 import android.app.AppOpsManager.MODE_ALLOWED
 import android.app.AppOpsManager.OPSTR_GET_USAGE_STATS
 import android.app.Application
@@ -65,6 +66,7 @@ import androidx.core.graphics.drawable.toBitmap
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.work.Configuration
 import androidx.work.WorkManager
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -96,6 +98,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var viewModel: AppViewModel
     private var pendingHistoryApp: AppInfo? = null
     lateinit var updateManager: UpdateManager
+    lateinit var ratingManager: RatingManager
+    private var showRatingDialog by mutableStateOf(false)
+
 
     private val uninstallLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -110,6 +115,9 @@ class MainActivity : ComponentActivity() {
                     AdManager.showInterstitial()
                     // Reset thresholds for the next session
                     AdManager.resetSelectionThresholds()
+                    
+                    // Trigger 2: After Successful Uninstall
+                    showRatingPrompt()
                 }
                 pendingHistoryApp = null
             }
@@ -143,6 +151,13 @@ class MainActivity : ComponentActivity() {
 
         // Initialize Update Manager
         updateManager = UpdateManager(this)
+        ratingManager = RatingManager(this)
+        
+        // Trigger 1: Daily App Open (Once per 24 hours)
+        lifecycleScope.launch {
+            delay(5000) // Wait 5 seconds after launch to not overwhelm the user
+            showRatingPrompt()
+        }
 
         // Initialize WorkManager manually (default disabled in Manifest to prevent crash)
         try {
@@ -196,6 +211,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     UninstallerApp(
                         viewModel = viewModel,
+                        ratingManager = ratingManager,
                         isDarkTheme = darkTheme,
                         onThemeToggle = { darkTheme = !darkTheme },
                         onUninstallRequest = { app ->
@@ -221,6 +237,17 @@ class MainActivity : ComponentActivity() {
                         }
                     )
                 }
+
+                // Show Rating Dialog inside the Composable tree
+                if (showRatingDialog) {
+                    RatingAvailableDialog(
+                        onDismiss = { showRatingDialog = false },
+                        onRateNow = { 
+                            ratingManager.launchStore(this@MainActivity)
+                            showRatingDialog = false
+                        }
+                    )
+                }
             }
         }
     }
@@ -233,6 +260,16 @@ class MainActivity : ComponentActivity() {
                 // If an immediate update is cancelled or fails, 
                 // we will re-check it in onResume to force the user back into the flow.
             }
+        }
+    }
+
+    /**
+     * Helper to show the rating prompt if eligible.
+     */
+    fun showRatingPrompt() {
+        if (::ratingManager.isInitialized && ratingManager.canShowPrompt()) {
+            showRatingDialog = true
+            ratingManager.markAsAsked()
         }
     }
 
@@ -596,6 +633,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             
             _uiState.emit(AppUiState.CleanFinished)
             discoveredJunk = emptyList()
+            
+            // Trigger 3: After Deep Clean Success
+            (ProcessLifecycleOwner.get().lifecycle as? LifecycleOwner)?.let { _ ->
+                // Since this is inside ViewModel, we can trigger via Activity if it's the current context
+                // Or better, let the UI observe the CleanFinished state and trigger it there.
+            }
+            
             // Reload storage stats and app list after a clean-up
             refreshList()
         }
@@ -942,6 +986,7 @@ data class HistoryAppRecord(
 @Composable
 fun UninstallerApp(
     viewModel: AppViewModel,
+    ratingManager: RatingManager,
     isDarkTheme: Boolean,
     onThemeToggle: () -> Unit,
     onUninstallRequest: (AppInfo) -> Unit,
@@ -1241,8 +1286,10 @@ fun UninstallerApp(
                     onCancel = { viewModel.backToHome() }
                 )
                 is AppUiState.CleanFinished -> {
+                    val context = LocalContext.current
                     LaunchedEffect(Unit) {
                         AdManager.showInterstitial()
+                        (context as? MainActivity)?.showRatingPrompt()
                     }
                     CleanFinishedScreen { viewModel.backToHome() }
                 }
@@ -1306,7 +1353,7 @@ fun UninstallerApp(
                             onBack = { currentScreen = "home" }
                         )
                     } else {
-                        SettingsScreen(viewModel)
+                        SettingsScreen(viewModel, ratingManager)
                     }
                 }
             }
@@ -2401,7 +2448,7 @@ fun CleanFinishedScreen(onDone: () -> Unit) {
 }
 
 @Composable
-fun SettingsScreen(viewModel: AppViewModel) {
+fun SettingsScreen(viewModel: AppViewModel, ratingManager: RatingManager) {
     val context = LocalContext.current
     val scanOnLaunch by viewModel.scanOnLaunch.collectAsState()
     val storageThreshold by viewModel.storageThreshold.collectAsState()
@@ -2700,20 +2747,7 @@ fun SettingsScreen(viewModel: AppViewModel) {
                     icon = Icons.Default.Star,
                     label = stringResource(R.string.item_rate),
                     onClick = {
-                        try {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=${context.packageName}")).apply {
-                                setPackage("com.android.vending")
-                            }
-                            context.startActivity(intent)
-                        } catch (e: android.content.ActivityNotFoundException) {
-                            try {
-                                val anyStoreIntent = Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=${context.packageName}"))
-                                context.startActivity(anyStoreIntent)
-                            } catch (e2: android.content.ActivityNotFoundException) {
-                                val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=${context.packageName}"))
-                                context.startActivity(webIntent)
-                            }
-                        } catch (e: Exception) {}
+                        ratingManager.launchStore(context as Activity, forceStore = true)
                     }
                 )
                 HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
@@ -2991,4 +3025,94 @@ fun HistoryItem(record: HistoryAppRecord, isIconCached: Boolean, onClick: () -> 
             Icon(Icons.AutoMirrored.Filled.OpenInNew, null, modifier = Modifier.size(16.dp), tint = EmeraldGreen)
         }
     }
+}
+
+@Composable
+fun RatingAvailableDialog(
+    onDismiss: () -> Unit,
+    onRateNow: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Charcoal,
+        shape = RoundedCornerShape(28.dp),
+        icon = {
+            Box(
+                modifier = Modifier
+                    .size(64.dp)
+                    .background(EmeraldGreen.copy(alpha = 0.1f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Star,
+                    contentDescription = null,
+                    modifier = Modifier.size(32.dp),
+                    tint = EmeraldGreen
+                )
+            }
+        },
+        title = {
+            Text(
+                text = stringResource(R.string.rating_title),
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        text = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Image(
+                    painter = painterResource(id = R.drawable.zee_uninstaller),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(80.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = stringResource(R.string.rating_message),
+                    color = Color.White.copy(alpha = 0.7f),
+                    fontSize = 14.sp,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 20.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                   modifier = Modifier.fillMaxWidth(),
+                   horizontalArrangement = Arrangement.Center
+                ) {
+                    repeat(5) {
+                        Icon(
+                            imageVector = Icons.Default.Star,
+                            contentDescription = null,
+                            modifier = Modifier.size(24.dp),
+                            tint = EmeraldGreen
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onRateNow,
+                colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(stringResource(R.string.item_rate).uppercase(), color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(stringResource(R.string.action_later), color = Color.White.copy(alpha = 0.5f))
+            }
+        },
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        modifier = Modifier.padding(24.dp).widthIn(max = 320.dp)
+    )
 }

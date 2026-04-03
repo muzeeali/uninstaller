@@ -70,6 +70,7 @@ dependencies {
 
     // AdMob
     implementation("com.google.android.gms:play-services-ads:23.6.0")
-    // App Updates
+    // App Updates & Reviews
     implementation(libs.play.app.update)
+    implementation(libs.play.review)
 }

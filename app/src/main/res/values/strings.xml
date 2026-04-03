@@ -118,4 +118,7 @@
     <string name="notif_storage_low_big_text">Your storage is %1$d%% full.\nUsed: %2$s   ·   Free: %3$s (%4$d%%)\n\nOpen Zee Uninstaller to remove unused apps and free space.</string>
     <string name="share_app_text">Check out Zee Uninstaller! It helps you manage apps and free up space with precision: https://play.google.com/store/apps/details?id=%1$s</string>
     <string name="share_specific_app">🚀 Check out %1$s: https://play.google.com/store/apps/details?id=%2$s\n\n📦 Shared via Zee Uninstaller — The fastest way to uninstall multiple apps and reclaim storage: https://play.google.com/store/apps/details?id=%3$s</string>
-</resources>
+    <string name="rating_title">Enjoying the App?</string>
+    <string name="rating_message">Your feedback helps us make Zee Uninstaller even better. Would you mind taking a moment to rate us?</string>
+    <string name="action_later">Maybe Later</string>
+</resources>
