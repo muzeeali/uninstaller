@@ -1145,7 +1145,7 @@ fun UninstallerApp(
                         modifier = Modifier.size(64.dp).clip(RoundedCornerShape(12.dp))
                     )
                     Spacer(modifier = Modifier.height(16.dp))
-                    Icon(Icons.Default.SystemUpdate, null, tint = EmeraldGreen, modifier = Modifier.size(32.dp))
+                    Icon(painter = painterResource(id = R.drawable.ic_system_update), null, tint = EmeraldGreen, modifier = Modifier.size(32.dp))
                 }
             },
             title = {
@@ -1387,7 +1387,7 @@ fun LoadingScreen() {
 fun EmptyStateScreen(onRetry: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Default.SearchOff, null, Modifier.size(80.dp), tint = EmeraldGreen.copy(alpha = 0.3f))
+            Icon(painter = painterResource(id = R.drawable.ic_search_off), null, Modifier.size(80.dp), tint = EmeraldGreen.copy(alpha = 0.3f))
             Spacer(modifier = Modifier.height(24.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(stringResource(R.string.state_no_apps), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black, color = LogoPurple)
@@ -1452,7 +1452,7 @@ fun UninstallerTopBar(
                 if (onHistory != null) {
                     IconButton(onClick = onHistory) {
                         Icon(
-                            imageVector = Icons.Default.History,
+                            painter = painterResource(id = R.drawable.ic_history),
                             contentDescription = "History",
                             tint = EmeraldGreen
                         )
@@ -1488,9 +1488,10 @@ fun UninstallerTopBar(
         actions = {
             IconButton(onClick = onThemeToggle) {
                 Icon(
-                    imageVector = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
+                    painter = painterResource(id = if (isDarkTheme) R.drawable.ic_light_mode else R.drawable.ic_dark_mode),
                     contentDescription = stringResource(R.string.content_toggle_theme),
-                    tint = if (isDarkTheme) Color.White else Charcoal
+                    tint = if (isDarkTheme) EmeraldGreen else LogoPurple,
+                    modifier = Modifier.size(24.dp)
                 )
             }
             IconButton(onClick = onSettingsClick) {
@@ -1620,7 +1621,7 @@ fun HomeScreen(
                             .clickable { showSortMenu = true },
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.Sort, null, tint = EmeraldGreen, modifier = Modifier.size(16.dp))
+                        Icon(painter = painterResource(id = R.drawable.ic_sort), null, tint = EmeraldGreen, modifier = Modifier.size(16.dp))
                     }
 
                     DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
@@ -1652,7 +1653,7 @@ fun HomeScreen(
                         HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), thickness = 0.5.dp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                         DropdownMenuItem(
                             text = { Text(if (isAscending) stringResource(R.string.sort_asc) else stringResource(R.string.sort_desc)) },
-                            leadingIcon = { Icon(if (isAscending) Icons.Default.VerticalAlignTop else Icons.Default.VerticalAlignBottom, null) },
+                            leadingIcon = { Icon(painter = painterResource(id = if (isAscending) R.drawable.ic_vertical_align_top else R.drawable.ic_vertical_align_bottom), null) },
                             onClick = { onSortChange(sortBy, !isAscending); showSortMenu = false }
                         )
                     }
@@ -1831,7 +1832,7 @@ fun HomeScreen(
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Row(modifier = Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.AutoDelete, null, modifier = Modifier.size(20.dp))
+                    Icon(painter = painterResource(id = R.drawable.ic_delete_forever), null, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
                     Text(stringResource(R.string.action_surgical_clean), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
@@ -1977,7 +1978,7 @@ fun AppRow(app: AppInfo, isIconCached: Boolean, isSelected: Boolean, onToggle: (
                         .background(MaterialTheme.colorScheme.surfaceVariant),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.Android, null,
+                    Icon(painter = painterResource(id = R.drawable.ic_android), null,
                         tint = EmeraldGreen.copy(alpha = 0.4f),
                         modifier = Modifier.size(26.dp))
                 }
@@ -2051,7 +2052,7 @@ fun AppActionDialog(
                                 .background(MaterialTheme.colorScheme.surfaceVariant),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.Android, null,
+                            Icon(painter = painterResource(id = R.drawable.ic_android), null,
                                 tint = EmeraldGreen.copy(alpha = 0.4f),
                                 modifier = Modifier.size(32.dp))
                         }
@@ -2118,7 +2119,7 @@ fun AppActionDialog(
                         colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Icon(Icons.Default.Launch, null, Modifier.size(18.dp))
+                        Icon(painter = painterResource(id = R.drawable.ic_launch), null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(stringResource(R.string.action_launch), fontSize = 11.sp, fontWeight = FontWeight.Black)
                     }
@@ -2136,7 +2137,7 @@ fun AppActionDialog(
                         ),
                         contentPadding = PaddingValues(horizontal = 8.dp)
                     ) {
-                        Icon(if (app.isSplitApk) Icons.Default.FolderZip else Icons.Default.CloudDownload, null, Modifier.size(18.dp))
+                        Icon(painter = painterResource(id = if (app.isSplitApk) R.drawable.ic_folder_zip else R.drawable.ic_system_update), null, Modifier.size(18.dp))
                         Spacer(Modifier.width(4.dp))
                         Text(
                             if (app.isSplitApk) stringResource(R.string.action_extract_apks) else stringResource(R.string.action_extract_apk),
@@ -2192,20 +2193,20 @@ fun AppActionDialog(
                 
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     InfoBox(Modifier.weight(1f), stringResource(R.string.info_version), app.version, Icons.Default.Info)
-                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_size), app.size, Icons.Default.SdStorage)
+                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_size), app.size, painterResource(id = R.drawable.ic_sd_storage))
                 }
                 Spacer(Modifier.height(6.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_target), "API ${app.targetSdk}", Icons.Default.DataObject)
-                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_last_used), lastUsedDate, Icons.Default.History)
+                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_target), "API ${app.targetSdk}", Icons.Default.Info)
+                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_last_used), lastUsedDate, painterResource(id = R.drawable.ic_history))
                 }
                 Spacer(Modifier.height(6.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_installed), installDate, Icons.Default.Event)
-                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_updated), updateDate, Icons.Default.Update)
+                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_installed), installDate, Icons.Default.Info)
+                    InfoBox(Modifier.weight(1f), stringResource(R.string.info_updated), updateDate, Icons.Default.Refresh)
                 }
                 Spacer(Modifier.height(6.dp))
-                InfoBox(Modifier.fillMaxWidth(), stringResource(R.string.info_source), source, Icons.Default.Source)
+                InfoBox(Modifier.fillMaxWidth(), stringResource(R.string.info_source), source, Icons.Default.List)
             }
         },
         shape = RoundedCornerShape(32.dp),
@@ -2217,6 +2218,20 @@ fun AppActionDialog(
 
 @Composable
 fun InfoBox(modifier: Modifier, label: String, value: String, icon: ImageVector) {
+    InfoBoxInternal(modifier = modifier, label = label, value = value, iconContent = {
+        Icon(icon, null, Modifier.size(12.dp), tint = LogoPurple)
+    })
+}
+
+@Composable
+fun InfoBox(modifier: Modifier, label: String, value: String, painter: androidx.compose.ui.graphics.painter.Painter) {
+    InfoBoxInternal(modifier = modifier, label = label, value = value, iconContent = {
+        Icon(painter, null, Modifier.size(12.dp), tint = LogoPurple)
+    })
+}
+
+@Composable
+private fun InfoBoxInternal(modifier: Modifier, label: String, value: String, iconContent: @Composable () -> Unit) {
     Surface(
         modifier = modifier,
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
@@ -2224,7 +2239,7 @@ fun InfoBox(modifier: Modifier, label: String, value: String, icon: ImageVector)
     ) {
         Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, null, Modifier.size(12.dp), tint = LogoPurple)
+                iconContent()
                 Spacer(Modifier.width(4.dp))
                 Text(label, fontSize = 9.sp, fontWeight = FontWeight.Black, color = Color.Gray)
             }
@@ -2286,7 +2301,7 @@ fun BulkActionBar(count: Int, reclaimedSpace: String, isAdUnlocked: Boolean, onU
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
             ) {
                 if (!isAdUnlocked) {
-                    Icon(Icons.Default.PlayCircle, null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("Watch Ad\n& Uninstall", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, lineHeight = 14.sp)
                 } else {
@@ -2350,7 +2365,7 @@ fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, on
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Surface(shape = CircleShape, color = LogoPurple.copy(alpha = 0.1f), modifier = Modifier.size(120.dp)) {
-                Icon(Icons.Default.Analytics, null, Modifier.padding(24.dp), tint = EmeraldGreen)
+                Icon(Icons.Default.Info, null, Modifier.padding(24.dp), tint = EmeraldGreen)
             }
             Spacer(modifier = Modifier.height(32.dp))
             Row {
@@ -2421,7 +2436,7 @@ fun CleanFinishedScreen(onDone: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Surface(shape = CircleShape, color = EmeraldGreen.copy(alpha = 0.1f), modifier = Modifier.size(140.dp)) {
-                Icon(Icons.Default.Verified, null, Modifier.padding(28.dp), tint = LogoPurple)
+                Icon(Icons.Default.CheckCircle, null, Modifier.padding(28.dp), tint = LogoPurple)
             }
             Spacer(modifier = Modifier.height(32.dp))
             Row {
@@ -2630,7 +2645,7 @@ fun SettingsScreen(viewModel: AppViewModel, ratingManager: RatingManager) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.FolderOpen, null, tint = EmeraldGreen, modifier = Modifier.size(18.dp))
+                            Icon(painter = painterResource(id = R.drawable.ic_folder), null, tint = EmeraldGreen, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
                             Text(stringResource(R.string.item_apk_path), fontWeight = FontWeight.Medium, fontSize = 14.sp)
                         }
@@ -2735,7 +2750,7 @@ fun SettingsScreen(viewModel: AppViewModel, ratingManager: RatingManager) {
         item { 
             SettingsGroup(stringResource(R.string.group_support)) {
                 SettingsItem(
-                    icon = Icons.Default.Apps,
+                    icon = Icons.Default.List,
                     label = stringResource(R.string.item_more_apps),
                     onClick = {
                         val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/developer?id=ZeeTech+Solutions+Pvt.+Ltd.&hl=en"))
@@ -2785,7 +2800,7 @@ fun SettingsScreen(viewModel: AppViewModel, ratingManager: RatingManager) {
         item {
             SettingsGroup(stringResource(R.string.group_legal)) {
                 SettingsItem(
-                    icon = Icons.Default.PrivacyTip,
+                    painter = painterResource(id = R.drawable.ic_privacy_tip),
                     label = stringResource(R.string.item_privacy),
                     onClick = {
                         val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://zeetechsolutionspvt.blogspot.com/2026/02/uninstaller.html"))
@@ -2827,6 +2842,20 @@ fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
 
 @Composable
 fun SettingsItem(icon: ImageVector, label: String, onClick: () -> Unit) {
+    SettingsItemInternal(label = label, onClick = onClick, iconContent = {
+        Icon(icon, null, tint = EmeraldGreen, modifier = Modifier.size(22.dp))
+    })
+}
+
+@Composable
+fun SettingsItem(painter: androidx.compose.ui.graphics.painter.Painter, label: String, onClick: () -> Unit) {
+    SettingsItemInternal(label = label, onClick = onClick, iconContent = {
+        Icon(painter, null, tint = EmeraldGreen, modifier = Modifier.size(22.dp))
+    })
+}
+
+@Composable
+private fun SettingsItemInternal(label: String, onClick: () -> Unit, iconContent: @Composable () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -2834,11 +2863,11 @@ fun SettingsItem(icon: ImageVector, label: String, onClick: () -> Unit) {
             .padding(18.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, null, tint = EmeraldGreen, modifier = Modifier.size(22.dp))
+        iconContent()
         Spacer(Modifier.width(16.dp))
         Text(text = label, fontWeight = FontWeight.Medium, fontSize = 15.sp)
         Spacer(Modifier.weight(1f))
-        Icon(Icons.AutoMirrored.Filled.ArrowForwardIos, null, tint = Color.Gray.copy(alpha = 0.5f), modifier = Modifier.size(14.dp))
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = Color.Gray.copy(alpha = 0.5f), modifier = Modifier.size(14.dp))
     }
 }
 
@@ -2906,7 +2935,7 @@ fun HistoryScreen(
         AlertDialog(
             onDismissRequest = { showConfirmDialog = false },
             icon = {
-                Icon(Icons.Default.DeleteForever, null, tint = Color.Red, modifier = Modifier.size(32.dp))
+                Icon(painter = painterResource(id = R.drawable.ic_delete_forever), null, tint = Color.Red, modifier = Modifier.size(32.dp))
             },
             title = {
                 Text(stringResource(R.string.dialog_clear_history_title), fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
@@ -2943,7 +2972,7 @@ fun HistoryScreen(
         if (history.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.History, null, modifier = Modifier.size(64.dp), tint = EmeraldGreen.copy(alpha = 0.2f))
+                    Icon(painter = painterResource(id = R.drawable.ic_history), null, modifier = Modifier.size(64.dp), tint = EmeraldGreen.copy(alpha = 0.2f))
                     Spacer(Modifier.height(16.dp))
                     Text(stringResource(R.string.history_empty), color = Color.Gray)
                 }
@@ -3016,7 +3045,7 @@ fun HistoryItem(record: HistoryAppRecord, isIconCached: Boolean, onClick: () -> 
                     modifier = Modifier.size(40.dp).background(EmeraldGreen.copy(alpha = 0.1f), CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.Shop, null, tint = EmeraldGreen, modifier = Modifier.size(20.dp))
+                    Icon(painter = painterResource(id = R.drawable.ic_shop), null, tint = EmeraldGreen, modifier = Modifier.size(20.dp))
                 }
             }
             Spacer(Modifier.width(12.dp))
@@ -3024,7 +3053,7 @@ fun HistoryItem(record: HistoryAppRecord, isIconCached: Boolean, onClick: () -> 
                 Text(record.name, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                 Text(record.packageName, fontSize = 11.sp, color = Color.Gray)
             }
-            Icon(Icons.AutoMirrored.Filled.OpenInNew, null, modifier = Modifier.size(16.dp), tint = EmeraldGreen)
+            Icon(Icons.Default.Share, null, modifier = Modifier.size(16.dp), tint = EmeraldGreen)
         }
     }
 }
