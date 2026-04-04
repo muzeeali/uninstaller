@@ -648,7 +648,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun calculateFolderSize(directory: File): Long {
         var size: Long = 0
         try {
-            directory.walkTopDown().maxDepth(3).forEach { file ->
+            directory.walkTopDown().maxDepth(10).forEach { file ->
                 if (file.isFile) size += file.length()
             }
         } catch (e: Exception) {}
@@ -844,7 +844,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val destFile = File(destDir, "${app.name.replace(" ", "_")}_v${app.version}.$extension")
 
                 if (isSplit) {
-                    // It's an App Bundle. Zip the base APK and all splits together.
                     java.util.zip.ZipOutputStream(FileOutputStream(destFile)).use { zos ->
                         val baseFile = File(packageInfo.sourceDir)
                         baseFile.inputStream().use { input ->
@@ -852,7 +851,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                             input.copyTo(zos)
                             zos.closeEntry()
                         }
-                        
                         packageInfo.splitSourceDirs?.forEach { splitPath ->
                             val splitFile = File(splitPath)
                             splitFile.inputStream().use { input ->
@@ -861,6 +859,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                                 zos.closeEntry()
                             }
                         }
+                    }
+                    if (!destFile.exists() || destFile.length() == 0L) {
+                        destFile.delete()
+                        throw Exception("Split APK extraction failed or resulted in an empty file.")
                     }
                 } else {
                     // Standard single APK

@@ -55,6 +55,9 @@ object AdManager {
     private var interstitialLoading = false
     private var lastInterstitialShowTime: Long = 0
     private const val INTERSTITIAL_COOLDOWN_MS = 120_000L // 2 Minutes
+    
+    // ── Global Ad Sync Flag ──────────────────────────────────────────────────
+    private var isAdShowing = false
 
     private var rewardedAd: RewardedAd? = null
     private var rewardedLoading = false
@@ -99,14 +102,18 @@ object AdManager {
     fun showAppOpenAdIfAvailable(onDismiss: () -> Unit = {}) {
         val activity = currentActivity() ?: run { onDismiss(); return }
         val ad = appOpenAd ?: run { onDismiss(); return }
+        if (isAdShowing) { onDismiss(); return }
 
+        isAdShowing = true
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
             override fun onAdDismissedFullScreenContent() {
+                isAdShowing = false
                 appOpenAd = null
                 loadAppOpen()
                 onDismiss()
             }
             override fun onAdFailedToShowFullScreenContent(error: AdError) {
+                isAdShowing = false
                 appOpenAd = null
                 loadAppOpen()
                 onDismiss()
@@ -152,19 +159,22 @@ object AdManager {
         }
 
         val ad = interstitialAd
-        if (ad == null) {
+        if (ad == null || isAdShowing) {
             loadInterstitial()
             onDismiss()
             return
         }
+        isAdShowing = true
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
             override fun onAdDismissedFullScreenContent() {
+                isAdShowing = false
                 interstitialAd = null
                 lastInterstitialShowTime = System.currentTimeMillis()
                 loadInterstitial()
                 onDismiss()
             }
             override fun onAdFailedToShowFullScreenContent(error: AdError) {
+                isAdShowing = false
                 interstitialAd = null
                 loadInterstitial()
                 onDismiss()
@@ -228,18 +238,21 @@ object AdManager {
     fun showRewarded(onRewardEarned: () -> Unit, onDismiss: () -> Unit = {}) {
         val activity = currentActivity() ?: run { onDismiss(); return }
         val ad = rewardedAd
-        if (ad == null) {
+        if (ad == null || isAdShowing) {
             loadRewarded()
             onDismiss()
             return
         }
+        isAdShowing = true
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
             override fun onAdDismissedFullScreenContent() {
+                isAdShowing = false
                 rewardedAd = null
                 loadRewarded()
                 onDismiss()
             }
             override fun onAdFailedToShowFullScreenContent(error: AdError) {
+                isAdShowing = false
                 rewardedAd = null
                 loadRewarded()
                 onDismiss()
