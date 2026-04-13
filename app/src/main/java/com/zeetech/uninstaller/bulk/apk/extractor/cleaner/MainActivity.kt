@@ -358,8 +358,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     val appVersionName: String = try {
         val pInfo = application.packageManager.getPackageInfo(application.packageName, 0)
-        pInfo.versionName ?: "1.0.1"
-    } catch (e: Exception) { "1.0.1" }
+        pInfo.versionName ?: "1.0.4"
+    } catch (e: Exception) { "1.0.4" }
 
     private var discoveredJunk = listOf<File>()
 
