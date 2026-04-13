@@ -2540,8 +2540,18 @@ fun SettingsScreen(viewModel: AppViewModel, ratingManager: RatingManager) {
                 border = androidx.compose.foundation.BorderStroke(1.dp, EmeraldGreen.copy(alpha = 0.2f))
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
-                    Surface(shape = CircleShape, color = Color.White.copy(alpha = 0.05f), modifier = Modifier.padding(bottom = 16.dp)) {
-                        Image(painterResource(id = R.drawable.zee_uninstaller), null, Modifier.size(80.dp).padding(8.dp))
+                    Surface(
+                        shape = CircleShape, 
+                        color = Color.White.copy(alpha = 0.05f), 
+                        modifier = Modifier.padding(bottom = 16.dp).size(96.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                            coil.compose.AsyncImage(
+                                model = R.mipmap.ic_launcher_foreground,
+                                contentDescription = null,
+                                modifier = Modifier.requiredSize(116.dp)
+                            )
+                        }
                     }
                     Row {
                         Text("ZEE ", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = LogoPurple)
