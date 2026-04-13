@@ -113,10 +113,10 @@ class MainActivity : ComponentActivity() {
                 if (isGone) {
                     pendingHistoryApp?.let { app -> viewModel.addToHistory(app) }
                     // Show interstitial after confirmed single uninstall
-                    AdManager.showInterstitial(forceAlways = true)
-                    
-                    // Trigger 2: After Successful Uninstall
-                    showActionRatingPrompt()
+                    AdManager.showInterstitial(forceAlways = true, onDismiss = {
+                        // Trigger 2: After Successful Uninstall
+                        showActionRatingPrompt()
+                    })
                 }
                 pendingHistoryApp = null
             }
@@ -159,13 +159,6 @@ class MainActivity : ComponentActivity() {
         if (viewModel.scanOnLaunch.value && viewModel.hasAllFilesAccess()) {
             viewModel.startDeepClean()
         }
-
-        // Initialize Update Manager
-        updateManager = UpdateManager(this)
-        ratingManager = RatingManager(this)
-        
-        // Initialization of RatingManager first launch logic 
-        // (Removal of immediate cold start prompt)
 
         // Initialize WorkManager manually (default disabled in Manifest to prevent crash)
         try {
@@ -589,8 +582,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             // 2. High-Yield Junk Targets (Direct Jump)
             val globalJunkPaths = listOf(
                 "DCIM/.thumbnails", "Pictures/.thumbnails", ".thumbnails", "LOST.DIR", 
-                "WhatsApp/Media/.Statuses", "Telegram/Telegram Images/cache", "Telegram/Telegram Video/cache",
-                "Android/media/com.whatsapp/WhatsApp/Media/.Statuses", "MIUI/debug_log", "Download/.tmp"
+                "Telegram/Telegram Images/cache", "Telegram/Telegram Video/cache",
+                "MIUI/debug_log", "Download/.tmp"
             )
             globalJunkPaths.forEach { path ->
                 val target = File(externalRoot, path)
@@ -1131,10 +1124,9 @@ fun UninstallerApp(
                 kotlinx.coroutines.delay(200) // Poll for ad readiness
             }
             
-            // Timeout reached: Proceed anyway (Graceful Fallback)
+            // Timeout reached: Ad Policy Enforcement - Don't proceed for free
             showAdLoader = false
-            android.widget.Toast.makeText(context, "Network slow. Proceeding for free!", android.widget.Toast.LENGTH_SHORT).show()
-            pendingBulkAction?.invoke()
+            android.widget.Toast.makeText(context, "Ad not available. Please try again later.", android.widget.Toast.LENGTH_SHORT).show()
             pendingBulkAction = null
         }
 
@@ -1158,7 +1150,7 @@ fun UninstallerApp(
     // ── Update Available Dialog (Fallback Path) ──────────────────────────────
     if (showUpdateDialog) {
         androidx.compose.material3.AlertDialog(
-            onDismissRequest = { if (!isMandatoryUpdate) showUpdateDialog = false },
+            onDismissRequest = { showUpdateDialog = false },
             containerColor = MaterialTheme.colorScheme.surface,
             icon = {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1195,8 +1187,7 @@ fun UninstallerApp(
                     onClick = {
                         val activity = context as? MainActivity
                         activity?.updateManager?.launchUpdateUrl(activity, updateUrl)
-                        // Don't close dialog if mandatory, force user to go to store
-                        if (!isMandatoryUpdate) showUpdateDialog = false
+                        showUpdateDialog = false
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
                     shape = RoundedCornerShape(12.dp),
@@ -1206,20 +1197,18 @@ fun UninstallerApp(
                 }
             },
             dismissButton = {
-                if (!isMandatoryUpdate) {
-                    TextButton(
-                        onClick = { showUpdateDialog = false },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("LATER", color = Color.Gray, fontWeight = FontWeight.Bold)
-                    }
+                TextButton(
+                    onClick = { showUpdateDialog = false },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (isMandatoryUpdate) "REMIND ME LATER" else "LATER", color = Color.Gray, fontWeight = FontWeight.Bold)
                 }
             },
             shape = RoundedCornerShape(28.dp),
             properties = DialogProperties(
                 usePlatformDefaultWidth = false,
-                dismissOnBackPress = !isMandatoryUpdate,
-                dismissOnClickOutside = !isMandatoryUpdate
+                dismissOnBackPress = true,
+                dismissOnClickOutside = true
             ),
             modifier = Modifier.padding(24.dp)
         )
@@ -1271,7 +1260,7 @@ fun UninstallerApp(
                     onRefresh = when (currentScreen) {
                         "home" -> {{
                             viewModel.refreshList()
-                            AdManager.onHomeRefreshTapped()
+                            // AdManager.onHomeRefreshTapped() is correctly called in HomeScreen's PullToRefresh
                         }}
                         "history" -> {{ 
                             viewModel.refreshHistory()
@@ -1310,8 +1299,9 @@ fun UninstallerApp(
                 is AppUiState.CleanFinished -> {
                     val activity = context.findActivity() as? MainActivity
                     LaunchedEffect(Unit) {
-                        AdManager.showInterstitial(forceAlways = true)
-                        activity?.showActionRatingPrompt()
+                        AdManager.showInterstitial(forceAlways = true, onDismiss = {
+                            activity?.showActionRatingPrompt()
+                        })
                     }
                     CleanFinishedScreen { viewModel.backToHome() }
                 }
@@ -1349,9 +1339,10 @@ fun UninstallerApp(
                             },
                             onExtract = { 
                                 // Premium Feature: Bypass cooldown
-                                AdManager.showInterstitial(forceAlways = true)
-                                viewModel.extractApk(it, haptics)
-                                activity?.showActionRatingPrompt()
+                                AdManager.showInterstitial(forceAlways = true, onDismiss = {
+                                    viewModel.extractApk(it, haptics)
+                                    activity?.showActionRatingPrompt()
+                                })
                             },
                             onBulkUninstall = { apps, doUninstall ->
                                 if (apps.size <= 1 && AdManager.rewardedUnlockActive) {

@@ -90,13 +90,7 @@ class RatingManager(private val context: Context) {
         prefs.edit().putBoolean(KEY_HAS_RATED, true).apply()
     }
 
-    /**
-     * Resets the rating status for debugging/testing.
-     */
-    fun resetRatingStatus() {
-        prefs.edit().clear().apply()
-        Log.d(TAG, "Rating status reset for testing.")
-    }
+
 
     /**
      * Launches the rating flow.

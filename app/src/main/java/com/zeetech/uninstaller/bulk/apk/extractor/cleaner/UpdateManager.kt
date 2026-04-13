@@ -29,9 +29,9 @@ class UpdateManager(private val context: Context) {
     private val remoteConfig: FirebaseRemoteConfig = Firebase.remoteConfig
 
     init {
+        val isDebuggable = (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
         val configSettings = remoteConfigSettings {
-            // Production value: 1 hour. Set to 0 only for immediate testing.
-            minimumFetchIntervalInSeconds = 3600 
+            minimumFetchIntervalInSeconds = if (isDebuggable) 0 else 3600 
         }
         remoteConfig.setConfigSettingsAsync(configSettings)
         remoteConfig.setDefaultsAsync(mapOf(
@@ -94,6 +94,8 @@ class UpdateManager(private val context: Context) {
                             override fun onStateUpdate(state: com.google.android.play.core.install.InstallState) {
                                 if (state.installStatus() == InstallStatus.DOWNLOADED) {
                                     onDownloaded()
+                                    appUpdateManager.unregisterListener(this)
+                                } else if (state.installStatus() == InstallStatus.CANCELED || state.installStatus() == InstallStatus.FAILED) {
                                     appUpdateManager.unregisterListener(this)
                                 }
                             }

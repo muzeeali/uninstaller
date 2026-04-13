@@ -113,9 +113,17 @@ object AdManager {
         )
     }
 
+    private var lastAppOpenAdShownTime = 0L
+    private const val APP_OPEN_AD_INTERVAL_MS = 4L * 60 * 60 * 1000L // 4 hours
+
     fun showAppOpenAdIfAvailable(onDismiss: () -> Unit = {}) {
         if (DEBUG_SUPPRESS_ADS) {
             Log.d(TAG, "Ad skipped (DEBUG_SUPPRESS_ADS=true)")
+            onDismiss()
+            return
+        }
+        val currentTime = System.currentTimeMillis()
+        if (currentTime - lastAppOpenAdShownTime < APP_OPEN_AD_INTERVAL_MS && lastAppOpenAdShownTime != 0L) {
             onDismiss()
             return
         }
@@ -128,6 +136,7 @@ object AdManager {
             override fun onAdDismissedFullScreenContent() {
                 isAdShowing = false
                 appOpenAd = null
+                lastAppOpenAdShownTime = System.currentTimeMillis()
                 loadAppOpen()
                 onDismiss()
             }
@@ -166,6 +175,9 @@ object AdManager {
     }
 
     fun showInterstitial(onDismiss: () -> Unit = {}, forceAlways: Boolean = false) {
+        // Note: The forceAlways parameter is no longer strictly required for bypassing
+        // time limits since the time-based cooldown was removed. However, it remains
+        // in the signature to explicitly denote premium gate triggers within the codebase.
         if (DEBUG_SUPPRESS_ADS) {
             Log.d(TAG, "Ad skipped (DEBUG_SUPPRESS_ADS=true)")
             onDismiss()
