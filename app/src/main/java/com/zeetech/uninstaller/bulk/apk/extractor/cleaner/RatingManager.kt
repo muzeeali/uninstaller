@@ -15,28 +15,65 @@ class RatingManager(private val context: Context) {
     private val PREFS_NAME = "rating_prefs"
     private val KEY_HAS_RATED = "has_rated_locally"
     private val KEY_LAST_ASKED = "last_asked_timestamp"
+    private val KEY_FIRST_LAUNCH = "first_launch_timestamp"
+    private val KEY_LAST_FOREGROUND_PROMPT = "last_foreground_prompt_timestamp"
     
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val manager: ReviewManager = ReviewManagerFactory.create(context)
 
     /**
-     * Checks if the user is eligible for a rating prompt.
-     * Eligibility: Not already rated AND (it's a new day or forced for testing)
+     * Initializes the first launch timestamp if it doesn't already exist.
      */
-    fun canShowPrompt(): Boolean {
-        if (prefs.getBoolean(KEY_HAS_RATED, false)) {
-            Log.d(TAG, "Eligibility check: Failed. User already engaged with rating.")
-            return false
+    fun initializeFirstLaunch() {
+        val current = prefs.getLong(KEY_FIRST_LAUNCH, 0L)
+        if (current == 0L) {
+            val now = System.currentTimeMillis()
+            prefs.edit().putLong(KEY_FIRST_LAUNCH, now).apply()
+            Log.d(TAG, "initializeFirstLaunch: Set to $now")
+        } else {
+            Log.d(TAG, "initializeFirstLaunch: Already set to $current")
         }
+    }
 
+    fun canShowActionPrompt(): Boolean {
+        if (prefs.getBoolean(KEY_HAS_RATED, false)) return false
+
+        val now = System.currentTimeMillis()
+        
+        // Initial Delay: 3 Hours
+        val initialDelay = 3 * 60 * 60 * 1000L 
+        val firstLaunch = prefs.getLong(KEY_FIRST_LAUNCH, 0L)
+        if (now - firstLaunch < initialDelay) return false
+
+        // Action Cooldown: 12 Hours
+        val actionCooldown = 12 * 60 * 60 * 1000L
         val lastAsked = prefs.getLong(KEY_LAST_ASKED, 0L)
-        val currentTime = System.currentTimeMillis()
-        val oneDayInMillis = 24 * 60 * 60 * 1000L
+        
+        return now - lastAsked >= actionCooldown
+    }
 
-        // Eligibility: If more than 24 hours passed since last ask
-        val result = currentTime - lastAsked >= oneDayInMillis
-        Log.d(TAG, "Eligibility check: ${if (result) "Passed" else "Failed (Too soon)"}")
-        return result
+    fun canShowForegroundPrompt(): Boolean {
+        if (prefs.getBoolean(KEY_HAS_RATED, false)) return false
+
+        val now = System.currentTimeMillis()
+
+        // Initial Delay: 3 Hours
+        val initialDelay = 3 * 60 * 60 * 1000L 
+        val firstLaunch = prefs.getLong(KEY_FIRST_LAUNCH, 0L)
+        if (now - firstLaunch < initialDelay) return false
+
+        // Foreground Cooldown: 12 Hours
+        val foregroundCooldown = 12 * 60 * 60 * 1000L 
+        val lastForeground = prefs.getLong(KEY_LAST_FOREGROUND_PROMPT, 0L)
+        
+        return now - lastForeground >= foregroundCooldown
+    }
+
+    /**
+     * Marks the foreground prompt as shown.
+     */
+    fun markForegroundPromptShown() {
+        prefs.edit().putLong(KEY_LAST_FOREGROUND_PROMPT, System.currentTimeMillis()).apply()
     }
 
     /**

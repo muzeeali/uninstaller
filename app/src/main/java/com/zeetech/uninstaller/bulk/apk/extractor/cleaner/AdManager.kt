@@ -28,6 +28,7 @@ private const val AD_UNIT_REWARDED     = "ca-app-pub-6425054459696619/1377906329
 // private const val AD_UNIT_REWARDED     = "ca-app-pub-3940256099942544/5224354917"
 
 object AdManager {
+    const val DEBUG_SUPPRESS_ADS = false // Set to false for production
 
     // ─── Weak reference to Activity (avoids memory leaks) ────────────────────
     private var activityRef: WeakReference<Activity>? = null
@@ -100,6 +101,11 @@ object AdManager {
     }
 
     fun showAppOpenAdIfAvailable(onDismiss: () -> Unit = {}) {
+        if (DEBUG_SUPPRESS_ADS) {
+            Log.d(TAG, "Ad skipped (DEBUG_SUPPRESS_ADS=true)")
+            onDismiss()
+            return
+        }
         val activity = currentActivity() ?: run { onDismiss(); return }
         val ad = appOpenAd ?: run { onDismiss(); return }
         if (isAdShowing) { onDismiss(); return }
@@ -147,6 +153,11 @@ object AdManager {
     }
 
     fun showInterstitial(onDismiss: () -> Unit = {}, force: Boolean = false) {
+        if (DEBUG_SUPPRESS_ADS) {
+            Log.d(TAG, "Ad skipped (DEBUG_SUPPRESS_ADS=true)")
+            onDismiss()
+            return
+        }
         val activity = currentActivity() ?: run { onDismiss(); return }
         
         // Smart Cooldown: Avoid spamming interstitials (3 Minutes)
@@ -236,6 +247,12 @@ object AdManager {
     }
 
     fun showRewarded(onRewardEarned: () -> Unit, onDismiss: () -> Unit = {}) {
+        if (DEBUG_SUPPRESS_ADS) {
+            Log.d(TAG, "Ad skipped (DEBUG_SUPPRESS_ADS=true). Rewarding immediately.")
+            rewardedUnlockActive = true
+            onRewardEarned()
+            return
+        }
         val activity = currentActivity() ?: run { onDismiss(); return }
         val ad = rewardedAd
         if (ad == null || isAdShowing) {

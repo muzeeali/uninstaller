@@ -9,6 +9,7 @@ import android.app.AppOpsManager.OPSTR_GET_USAGE_STATS
 import android.app.Application
 import android.app.usage.UsageStatsManager
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.net.Uri
@@ -117,7 +118,7 @@ class MainActivity : ComponentActivity() {
                     AdManager.resetSelectionThresholds()
                     
                     // Trigger 2: After Successful Uninstall
-                    showRatingPrompt()
+                    showActionRatingPrompt()
                 }
                 pendingHistoryApp = null
             }
@@ -131,10 +132,22 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         viewModel = ViewModelProvider(this)[AppViewModel::class.java]
 
-        // App Open Ad - Foreground Resumption Logic
+        // Initialize Update Manager
+        updateManager = UpdateManager(this)
+        ratingManager = RatingManager(this)
+        ratingManager.initializeFirstLaunch()
+
+        // App Open Ad & Rating - Foreground Resumption Logic
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
+            private var isFirstStart = true
             override fun onStart(owner: LifecycleOwner) {
-                AdManager.showAppOpenAdIfAvailable()
+                // Wait for the ad to be dismissed or failed before showing the rating prompt
+                AdManager.showAppOpenAdIfAvailable {
+                    if (!isFirstStart) {
+                        showForegroundRatingPrompt()
+                    }
+                    isFirstStart = false
+                }
             }
         })
 
@@ -153,11 +166,8 @@ class MainActivity : ComponentActivity() {
         updateManager = UpdateManager(this)
         ratingManager = RatingManager(this)
         
-        // Trigger 1: Daily App Open (Once per 24 hours)
-        lifecycleScope.launch {
-            delay(5000) // Wait 5 seconds after launch to not overwhelm the user
-            showRatingPrompt()
-        }
+        // Initialization of RatingManager first launch logic 
+        // (Removal of immediate cold start prompt)
 
         // Initialize WorkManager manually (default disabled in Manifest to prevent crash)
         try {
@@ -264,12 +274,26 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Helper to show the rating prompt if eligible.
+     * Helper to show the rating prompt for ACTIONS (Uninstall, Clean, Extract).
      */
-    fun showRatingPrompt() {
-        if (::ratingManager.isInitialized && ratingManager.canShowPrompt()) {
-            showRatingDialog = true
+    fun showActionRatingPrompt() {
+        if (::ratingManager.isInitialized && ratingManager.canShowActionPrompt()) {
+            runOnUiThread {
+                showRatingDialog = true
+            }
             ratingManager.markAsAsked()
+        }
+    }
+
+    /**
+     * Helper to show the rating prompt for FOREGROUND/APP-OPEN.
+     */
+    fun showForegroundRatingPrompt() {
+        if (::ratingManager.isInitialized && ratingManager.canShowForegroundPrompt()) {
+            runOnUiThread {
+                showRatingDialog = true
+            }
+            ratingManager.markForegroundPromptShown()
         }
     }
 
@@ -985,6 +1009,7 @@ data class HistoryAppRecord(
     val timestamp: Long
 )
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UninstallerApp(
     viewModel: AppViewModel,
@@ -996,8 +1021,9 @@ fun UninstallerApp(
 ) {
     var currentScreen by rememberSaveable { mutableStateOf("home") }
     var prevScreen by rememberSaveable { mutableStateOf("home") }
-    val currentUiState = viewModel.uiState.collectAsState().value
+    val currentUiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() as? MainActivity }
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     
     // ── Update System States ────────────────────────────────────────────────
@@ -1288,10 +1314,10 @@ fun UninstallerApp(
                     onCancel = { viewModel.backToHome() }
                 )
                 is AppUiState.CleanFinished -> {
-                    val context = LocalContext.current
+                    val activity = context.findActivity() as? MainActivity
                     LaunchedEffect(Unit) {
                         AdManager.showInterstitial()
-                        (context as? MainActivity)?.showRatingPrompt()
+                        activity?.showActionRatingPrompt()
                     }
                     CleanFinishedScreen { viewModel.backToHome() }
                 }
@@ -1330,13 +1356,18 @@ fun UninstallerApp(
                             onExtract = { 
                                 // Premium Feature: Bypass cooldown
                                 AdManager.showInterstitial(force = true)
-                                viewModel.extractApk(it, haptics) 
+                                viewModel.extractApk(it, haptics)
+                                activity?.showActionRatingPrompt()
                             },
                             onBulkUninstall = { apps, doUninstall ->
                                 if (apps.size <= 1 && AdManager.rewardedUnlockActive) {
                                     doUninstall()
+                                    activity?.showActionRatingPrompt()
                                 } else {
-                                    pendingBulkAction = doUninstall
+                                    pendingBulkAction = {
+                                        doUninstall()
+                                        activity?.showActionRatingPrompt()
+                                    }
                                     showBulkAdDialog = true
                                 }
                             },
@@ -1504,6 +1535,16 @@ fun UninstallerTopBar(
         },
         colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent)
     )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+fun Context.findActivity(): Activity? {
+    var context = this
+    while (context is ContextWrapper) {
+        if (context is Activity) return context
+        context = context.baseContext
+    }
+    return null
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
