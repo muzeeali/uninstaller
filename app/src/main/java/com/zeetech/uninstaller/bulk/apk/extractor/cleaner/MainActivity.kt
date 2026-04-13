@@ -113,9 +113,7 @@ class MainActivity : ComponentActivity() {
                 if (isGone) {
                     pendingHistoryApp?.let { app -> viewModel.addToHistory(app) }
                     // Show interstitial after confirmed single uninstall
-                    AdManager.showInterstitial()
-                    // Reset thresholds for the next session
-                    AdManager.resetSelectionThresholds()
+                    AdManager.showInterstitial(forceAlways = true)
                     
                     // Trigger 2: After Successful Uninstall
                     showActionRatingPrompt()
@@ -1047,13 +1045,13 @@ fun UninstallerApp(
 
     // ── Ad triggers on screen transitions ───────────────────────────────────
     LaunchedEffect(currentScreen) {
-        // Interstitial: every time user exits the History tab
-        if (prevScreen == "history" && currentScreen == "home") {
-            AdManager.showInterstitial()
+        // Trigger 5: Fire on ENTERING settings
+        if (currentScreen == "settings") {
+            AdManager.onEnteredSettings()
         }
-        // Interstitial: first time per session when exiting Settings
-        if (prevScreen == "settings" && currentScreen == "home") {
-            AdManager.onExitedSettings()
+        // Trigger 6: Any transition TO home counts
+        if (currentScreen == "home" && prevScreen != "home") {
+            AdManager.onNavigatedToHome()
         }
         prevScreen = currentScreen
     }
@@ -1228,8 +1226,6 @@ fun UninstallerApp(
     }
 
     BackHandler(enabled = currentScreen != "home") {
-        // Exit ad (Cooldown active)
-        AdManager.showInterstitial()
         currentScreen = "home"
     }
 
@@ -1264,8 +1260,6 @@ fun UninstallerApp(
                     isDarkTheme = isDarkTheme,
                     onThemeToggle = onThemeToggle,
                     onSettingsClick = {
-                        // Exit/Home ad (Cooldown active)
-                        AdManager.showInterstitial()
                         currentScreen = when (currentScreen) {
                             "home" -> "settings"
                             "history" -> "home"
@@ -1277,11 +1271,11 @@ fun UninstallerApp(
                     onRefresh = when (currentScreen) {
                         "home" -> {{
                             viewModel.refreshList()
-                            AdManager.onRefreshTapped()
+                            AdManager.onHomeRefreshTapped()
                         }}
                         "history" -> {{ 
                             viewModel.refreshHistory()
-                            AdManager.onRefreshTapped()
+                            AdManager.onHistoryRefreshTapped()
                         }}
                         else -> null
                     },
@@ -1295,7 +1289,7 @@ fun UninstallerApp(
                     }} else null,
                     onSettingsNav = if (currentScreen == "history") {{ currentScreen = "settings" }} else null,
                     onHistory = if (currentScreen != "history") {{
-                        AdManager.showInterstitial(force = true)
+                        AdManager.showInterstitial(forceAlways = true)
                         currentScreen = "history"
                     }} else null
                 )
@@ -1316,7 +1310,7 @@ fun UninstallerApp(
                 is AppUiState.CleanFinished -> {
                     val activity = context.findActivity() as? MainActivity
                     LaunchedEffect(Unit) {
-                        AdManager.showInterstitial()
+                        AdManager.showInterstitial(forceAlways = true)
                         activity?.showActionRatingPrompt()
                     }
                     CleanFinishedScreen { viewModel.backToHome() }
@@ -1351,11 +1345,11 @@ fun UninstallerApp(
                             },
                             onRefresh = { 
                                 viewModel.refreshList() 
-                                AdManager.onRefreshTapped()
+                                AdManager.onHomeRefreshTapped()
                             },
                             onExtract = { 
                                 // Premium Feature: Bypass cooldown
-                                AdManager.showInterstitial(force = true)
+                                AdManager.showInterstitial(forceAlways = true)
                                 viewModel.extractApk(it, haptics)
                                 activity?.showActionRatingPrompt()
                             },
@@ -1373,7 +1367,7 @@ fun UninstallerApp(
                             },
                             isBulkAdUnlocked = AdManager.rewardedUnlockActive,
                             onTabSwitched = { AdManager.onTabSwitched() },
-                            onSelectAll = { AdManager.showInterstitial() },
+                            onSelectAll = { AdManager.onSelectAll() },
                             onSelectionChanged = { count -> AdManager.onSelectionChanged(count) }
                         )
                     } else if (currentScreen == "history") {
@@ -1767,7 +1761,10 @@ fun HomeScreen(
                     Checkbox(
                         checked = isAllSelected,
                         onCheckedChange = { 
-                            if (isAllSelected) selectedApps.clear()
+                            if (isAllSelected) {
+                                selectedApps.clear()
+                                onSelectionChanged(0)
+                            }
                             else {
                                 selectedApps.clear()
                                 selectedApps.addAll(currentVisibleApps)
@@ -1805,7 +1802,6 @@ fun HomeScreen(
                                 .background(if (isSelected) EmeraldGreen else Color.Transparent)
                                 .clickable {
                                     coroutineScope.launch { pagerState.animateScrollToPage(index) }
-                                    if (!isSelected) onTabSwitched() // fire interstitial on tab switch
                                 },
                             contentAlignment = Alignment.Center
                         ) {
@@ -1847,8 +1843,10 @@ fun HomeScreen(
                                 isIconCached = cachedIcons.contains(app.packageName),
                                 isSelected = isSelected,
                                 onToggle = {
-                                    if (isSelected) selectedApps.remove(app)
-                                    else {
+                                    if (isSelected) {
+                                        selectedApps.remove(app)
+                                        if (selectedApps.isEmpty()) onSelectionChanged(0)
+                                    } else {
                                         selectedApps.add(app)
                                         onSelectionChanged(selectedApps.size)
                                     }
@@ -1906,8 +1904,10 @@ fun HomeScreen(
                         }
                     },
                     onSelectAll = {
-                        if (selectedApps.size == currentVisibleApps.size) selectedApps.clear()
-                        else {
+                        if (selectedApps.size == currentVisibleApps.size) {
+                            selectedApps.clear()
+                            onSelectionChanged(0)
+                        } else {
                             selectedApps.clear()
                             selectedApps.addAll(currentVisibleApps)
                             onSelectAll()

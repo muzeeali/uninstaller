@@ -43,9 +43,24 @@ object AdManager {
     var rewardedUnlockActive = false   // lifted after watching rewarded ad
 
 
-    // Selection threshold ladder: 3, 5, 10
-    private val selectionThresholds = listOf(3, 5, 10)
-    private val triggeredThresholds = mutableSetOf<Int>()
+    // ─── Session Ad Counters (reset on process death / cold start) ────────────
+    private var homeRefreshCount = 0                    // Trigger 1a: Home refresh, every 3rd
+    private var historyRefreshCount = 0                 // Trigger 1b: History refresh, every 3rd
+    private const val REFRESH_AD_EVERY = 3
+
+    private var tabSwitchCount = 0                      // Trigger 4
+    private const val TAB_SWITCH_AD_EVERY = 5
+
+    private var settingsEntryCount = 0                  // Trigger 5
+    private const val SETTINGS_AD_EVERY = 3
+
+    private var homeNavCount = 0                        // Trigger 6
+    private const val HOME_NAV_AD_EVERY = 5
+
+    private var selectAllCount = 0                      // Trigger 3: Select All, every 3rd
+    private const val SELECT_ALL_AD_EVERY = 3
+
+    private var selectionAdFiredThisCycle = false       // Trigger 2: rearms at count==0
 
     // ─── Ad Objects ──────────────────────────────────────────────────────────
     private var appCtx: Context? = null
@@ -54,8 +69,6 @@ object AdManager {
 
     private var interstitialAd: InterstitialAd? = null
     private var interstitialLoading = false
-    private var lastInterstitialShowTime: Long = 0
-    private const val INTERSTITIAL_COOLDOWN_MS = 120_000L // 2 Minutes
     
     // ── Global Ad Sync Flag ──────────────────────────────────────────────────
     private var isAdShowing = false
@@ -152,22 +165,13 @@ object AdManager {
         )
     }
 
-    fun showInterstitial(onDismiss: () -> Unit = {}, force: Boolean = false) {
+    fun showInterstitial(onDismiss: () -> Unit = {}, forceAlways: Boolean = false) {
         if (DEBUG_SUPPRESS_ADS) {
             Log.d(TAG, "Ad skipped (DEBUG_SUPPRESS_ADS=true)")
             onDismiss()
             return
         }
         val activity = currentActivity() ?: run { onDismiss(); return }
-        
-        // Smart Cooldown: Avoid spamming interstitials (3 Minutes)
-        // Bypass if this is a "Premium" forced action (Extract/History)
-        val now = System.currentTimeMillis()
-        if (!force && now - lastInterstitialShowTime < INTERSTITIAL_COOLDOWN_MS) {
-            Log.d(TAG, "Interstitial ignored: Cooldown active")
-            onDismiss()
-            return
-        }
 
         val ad = interstitialAd
         if (ad == null || isAdShowing) {
@@ -180,7 +184,6 @@ object AdManager {
             override fun onAdDismissedFullScreenContent() {
                 isAdShowing = false
                 interstitialAd = null
-                lastInterstitialShowTime = System.currentTimeMillis()
                 loadInterstitial()
                 onDismiss()
             }
@@ -196,30 +199,64 @@ object AdManager {
 
     // ─── Contextual interstitial triggers ────────────────────────────────────
 
-    fun onRefreshTapped() {
-        showInterstitial()
-    }
-
-    fun onTabSwitched() {
-        showInterstitial()
-    }
-
-    fun onExitedSettings() {
-        showInterstitial()
-    }
-
-    fun onSelectionChanged(newCount: Int) {
-        for (threshold in selectionThresholds) {
-            if (newCount >= threshold && !triggeredThresholds.contains(threshold)) {
-                triggeredThresholds.add(threshold)
-                showInterstitial()
-                break
-            }
+    // Trigger 1a — Home Refresh (1, 4, 7, 10...)
+    fun onHomeRefreshTapped() {
+        homeRefreshCount++
+        if (homeRefreshCount % REFRESH_AD_EVERY == 1) {
+            showInterstitial()
         }
     }
 
-    fun resetSelectionThresholds() {
-        triggeredThresholds.clear()
+    // Trigger 1b — History Refresh (1, 4, 7, 10... separate counter)
+    fun onHistoryRefreshTapped() {
+        historyRefreshCount++
+        if (historyRefreshCount % REFRESH_AD_EVERY == 1) {
+            showInterstitial()
+        }
+    }
+
+    // Trigger 2 — Selection count
+    fun onSelectionChanged(newCount: Int) {
+        if (newCount == 0) {
+            selectionAdFiredThisCycle = false   // rearm for next cycle
+        }
+        if (newCount >= 3 && !selectionAdFiredThisCycle) {
+            selectionAdFiredThisCycle = true
+            showInterstitial()
+        }
+    }
+
+    // Trigger 3 — Select All (1, 4, 7, 10... independent counter)
+    fun onSelectAll() {
+        selectAllCount++
+        if (selectAllCount % SELECT_ALL_AD_EVERY == 1) {
+            showInterstitial()
+        }
+        selectionAdFiredThisCycle = true
+    }
+
+    // Trigger 4 — Tab switch (1, 5, 10, 15...)
+    fun onTabSwitched() {
+        tabSwitchCount++
+        if (tabSwitchCount == 1 || tabSwitchCount % TAB_SWITCH_AD_EVERY == 0) {
+            showInterstitial()
+        }
+    }
+
+    // Trigger 5 — Enter Settings (1, 4, 7, 10...)
+    fun onEnteredSettings() {
+        settingsEntryCount++
+        if (settingsEntryCount % SETTINGS_AD_EVERY == 1) {
+            showInterstitial()
+        }
+    }
+
+    // Trigger 6 — Navigate to Home from ANYWHERE (1, 5, 10, 15...)
+    fun onNavigatedToHome() {
+        homeNavCount++
+        if (homeNavCount == 1 || homeNavCount % HOME_NAV_AD_EVERY == 0) {
+            showInterstitial()
+        }
     }
 
     // ─── Rewarded ────────────────────────────────────────────────────────────
