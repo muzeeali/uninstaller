@@ -125,6 +125,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    internal val updateLauncher = registerForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode != RESULT_OK) {
+            Log.e("MainActivity", "Update flow failed! Result code: ${result.resultCode}")
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
@@ -253,16 +261,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == UpdateManager.UPDATE_REQUEST_CODE) {
-            if (resultCode != RESULT_OK) {
-                Log.e("MainActivity", "Update flow failed! Result code: $resultCode")
-                // If an immediate update is cancelled or fails, 
-                // we will re-check it in onResume to force the user back into the flow.
-            }
-        }
-    }
+    // onActivityResult for UpdateManager is now handled by ActivityResultLauncher
 
     /**
      * Helper to show the rating prompt for ACTIONS (Uninstall, Clean, Extract).
@@ -295,7 +294,7 @@ class MainActivity : ComponentActivity() {
 
         // Resume any ongoing IMMEDIATE updates (Google Play)
         if (::updateManager.isInitialized) {
-            updateManager.checkOngoingUpdate(this)
+            updateManager.checkOngoingUpdate(updateLauncher)
         }
         // Icons are now preserved on disk and handled by Coil.
     }
@@ -309,6 +308,9 @@ class MainActivity : ComponentActivity() {
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow<AppUiState>(AppUiState.Loading)
     val uiState: StateFlow<AppUiState> = _uiState
+
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing
 
     // Set of package names whose icons are currently cached on disk
     private val _cachedIcons = MutableStateFlow<Set<String>>(emptySet())
@@ -366,21 +368,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     init {
         loadApps()
         loadHistory()
-        detectExternallyUninstalled()
     }
 
     private fun loadHistory() {
         val json = prefs.getString("uninstalled_history", null)
         if (json != null) {
             try {
-                // Simple manual parsing to avoid heavy GSON/KotlinX-Serialization dependency if not present
                 val list = mutableListOf<HistoryAppRecord>()
-                val items = json.split("|||")
-                items.forEach { item ->
-                    val parts = item.split("###")
-                    if (parts.size == 3) {
-                        list.add(HistoryAppRecord(parts[0], parts[1], parts[2].toLong()))
-                    }
+                val arr = org.json.JSONArray(json)
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    list.add(HistoryAppRecord(o.getString("n"), o.getString("p"), o.getLong("t")))
                 }
                 _uninstalledHistory.value = list.sortedByDescending { it.timestamp }
             } catch (e: Exception) { _uninstalledHistory.value = emptyList() }
@@ -388,8 +386,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun saveHistory(list: List<HistoryAppRecord>) {
-        val serialized = list.joinToString("|||") { "${it.name}###${it.packageName}###${it.timestamp}" }
-        prefs.edit().putString("uninstalled_history", serialized).apply()
+        val json = org.json.JSONArray().also { arr ->
+            list.forEach { r ->
+                arr.put(org.json.JSONObject().put("n", r.name).put("p", r.packageName).put("t", r.timestamp))
+            }
+        }.toString()
+        prefs.edit().putString("uninstalled_history", json).apply()
     }
 
     fun addToHistory(app: AppInfo) {
@@ -431,18 +433,25 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Persists a packageName → appName map so we can name orphaned apps later. */
     private fun saveAppNameMapping(apps: List<AppInfo>) {
-        val serialized = apps.joinToString("|||") { "${it.packageName}###${it.name}" }
-        prefs.edit().putString("app_name_map", serialized).apply()
+        val json = org.json.JSONArray().also { arr ->
+            apps.forEach { app ->
+                arr.put(org.json.JSONObject().put("p", app.packageName).put("n", app.name))
+            }
+        }.toString()
+        prefs.edit().putString("app_name_map", json).apply()
     }
 
     /** Returns the saved packageName → appName map from the last scan. */
     private fun loadAppNameMapping(): Map<String, String> {
         val raw = prefs.getString("app_name_map", null) ?: return emptyMap()
         return try {
-            raw.split("|||").associate {
-                val parts = it.split("###")
-                parts[0] to parts[1]
+            val map = mutableMapOf<String, String>()
+            val arr = org.json.JSONArray(raw)
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                map[o.getString("p")] = o.getString("n")
             }
+            map
         } catch (e: Exception) { emptyMap() }
     }
 
@@ -681,11 +690,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadApps(force: Boolean = false, onCompletion: ((Boolean) -> Unit)? = null) {
+        _isRefreshing.value = true
         // Skip reload if we already have cached data (e.g. returning from a popup)
         if (!force && cachedSuccessState != null) {
             viewModelScope.launch { 
                 _uiState.emit(cachedSuccessState!!) 
                 onCompletion?.invoke(false)
+                _isRefreshing.value = false
             }
             return
         }
@@ -767,7 +778,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             // PRE-CALCULATE STORAGE (fast)
-            val stat = StatFs(Environment.getDataDirectory().path)
+            val statPath = if (Environment.getExternalStorageState() == Environment.MEDIA_MOUNTED)
+                Environment.getExternalStorageDirectory().path
+            else
+                Environment.getDataDirectory().path
+            val stat = StatFs(statPath)
             val bs = stat.blockSizeLong
             val storage = StorageInfo(
                 free = formatSize(stat.availableBlocksLong * bs),
@@ -840,6 +855,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             }
+            _isRefreshing.value = false
         }
     }
 
@@ -1024,9 +1040,9 @@ fun UninstallerApp(
     var isMandatoryUpdate by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        val activity = context as? MainActivity ?: return@LaunchedEffect
-        activity.updateManager.checkForUpdates(
-            activity = activity,
+        val act = context as? MainActivity ?: return@LaunchedEffect
+        act.updateManager.checkForUpdates(
+            updateLauncher = act.updateLauncher,
             onFlexibleUpdateDownloaded = { isUpdateReady = true },
             onManualUpdateAvailable = { url, isMandatory ->
                 updateUrl = url
@@ -1155,8 +1171,8 @@ fun UninstallerApp(
             icon = {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     // Show App Logo
-                    Image(
-                        painter = painterResource(id = R.drawable.zee_uninstaller),
+                    coil.compose.AsyncImage(
+                        model = R.mipmap.ic_launcher_foreground,
                         contentDescription = null,
                         modifier = Modifier.size(64.dp).clip(RoundedCornerShape(12.dp))
                     )
@@ -1310,13 +1326,14 @@ fun UninstallerApp(
                     val isAscending by viewModel.isAscending.collectAsState()
                     val storageThreshold by viewModel.storageThreshold.collectAsState()
                     val cachedIcons by viewModel.cachedIcons.collectAsState()
+                    val isRefreshing by viewModel.isRefreshing.collectAsState()
 
                     if (currentScreen == "home") {
                         HomeScreen(
                             apps = state.apps,
                             storage = state.storage,
                             cachedIcons = cachedIcons,
-                            isRefreshing = currentUiState is AppUiState.Loading && state.apps.isNotEmpty(),
+                            isRefreshing = isRefreshing,
                             sortBy = sortBy,
                             isAscending = isAscending,
                             storageThreshold = storageThreshold,
@@ -2411,8 +2428,7 @@ fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, on
             Spacer(modifier = Modifier.height(32.dp))
             Button(
                 onClick = {
-                    AdManager.showInterstitial()
-                    onClean()
+                    AdManager.showInterstitial(onDismiss = { onClean() })
                 }, 
                 modifier = Modifier.fillMaxWidth().height(60.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
@@ -2452,6 +2468,9 @@ fun BannerAdView() {
         }
     }
 
+    DisposableEffect(Unit) {
+        onDispose { adView.destroy() }
+    }
     AndroidView(
         modifier = Modifier.fillMaxWidth(),
         factory = { adView }
@@ -2806,7 +2825,8 @@ fun SettingsScreen(viewModel: AppViewModel, ratingManager: RatingManager) {
                     icon = Icons.Default.Star,
                     label = stringResource(R.string.item_rate),
                     onClick = {
-                        ratingManager.launchStore(context as Activity, forceStore = true)
+                        val activity = context.findActivity() as? Activity ?: return@SettingsItem
+                        ratingManager.launchStore(activity, forceStore = true)
                     }
                 )
                 HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
@@ -3136,8 +3156,8 @@ fun RatingAvailableDialog(
         },
         text = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Image(
-                    painter = painterResource(id = R.drawable.zee_uninstaller),
+                coil.compose.AsyncImage(
+                    model = R.mipmap.ic_launcher_foreground,
                     contentDescription = null,
                     modifier = Modifier
                         .size(80.dp)

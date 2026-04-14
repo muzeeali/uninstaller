@@ -250,7 +250,7 @@ object AdManager {
     // Trigger 4 — Tab switch (1, 5, 10, 15...)
     fun onTabSwitched() {
         tabSwitchCount++
-        if (tabSwitchCount == 1 || tabSwitchCount % TAB_SWITCH_AD_EVERY == 0) {
+        if (tabSwitchCount > 0 && tabSwitchCount % TAB_SWITCH_AD_EVERY == 0) {
             showInterstitial()
         }
     }
@@ -266,7 +266,7 @@ object AdManager {
     // Trigger 6 — Navigate to Home from ANYWHERE (1, 5, 10, 15...)
     fun onNavigatedToHome() {
         homeNavCount++
-        if (homeNavCount == 1 || homeNavCount % HOME_NAV_AD_EVERY == 0) {
+        if (homeNavCount > 0 && homeNavCount % HOME_NAV_AD_EVERY == 0) {
             showInterstitial()
         }
     }

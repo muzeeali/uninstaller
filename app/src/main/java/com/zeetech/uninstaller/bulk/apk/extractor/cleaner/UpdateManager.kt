@@ -21,7 +21,7 @@ import com.google.firebase.remoteconfig.ktx.remoteConfigSettings
 class UpdateManager(private val context: Context) {
 
     companion object {
-        const val UPDATE_REQUEST_CODE = 1001
+        const val UPDATE_REQUEST_CODE = 1001 // Kept for backward compatibility if ever needed
     }
 
     private val TAG = "UpdateManager"
@@ -47,7 +47,7 @@ class UpdateManager(private val context: Context) {
      * Main entry point to check for updates
      */
     fun checkForUpdates(
-        activity: Activity,
+        updateLauncher: androidx.activity.result.ActivityResultLauncher<androidx.activity.result.IntentSenderRequest>,
         onFlexibleUpdateDownloaded: () -> Unit,
         onManualUpdateAvailable: (url: String, isMandatory: Boolean) -> Unit
     ) {
@@ -56,7 +56,7 @@ class UpdateManager(private val context: Context) {
             
             if (isGooglePlaySource()) {
                 Log.d(TAG, "Source: Google Play. Flow: ${if (isMandatory) "IMMEDIATE" else "FLEXIBLE"}")
-                checkPlayStoreUpdate(activity, isMandatory, onFlexibleUpdateDownloaded)
+                checkPlayStoreUpdate(updateLauncher, isMandatory, onFlexibleUpdateDownloaded)
             } else {
                 Log.d(TAG, "Source: Other/APK. Checking Firebase...")
                 // In APK path, if test_update is true, we force it for UI verification
@@ -81,7 +81,7 @@ class UpdateManager(private val context: Context) {
         }
     }
 
-    private fun checkPlayStoreUpdate(activity: Activity, isMandatory: Boolean, onDownloaded: () -> Unit) {
+    private fun checkPlayStoreUpdate(updateLauncher: androidx.activity.result.ActivityResultLauncher<androidx.activity.result.IntentSenderRequest>, isMandatory: Boolean, onDownloaded: () -> Unit) {
         val appUpdateInfoTask = appUpdateManager.appUpdateInfo
         appUpdateInfoTask.addOnSuccessListener { appUpdateInfo ->
             if (appUpdateInfo.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE) {
@@ -105,9 +105,8 @@ class UpdateManager(private val context: Context) {
 
                     appUpdateManager.startUpdateFlowForResult(
                         appUpdateInfo,
-                        activity,
-                        AppUpdateOptions.newBuilder(updateType).build(),
-                        UPDATE_REQUEST_CODE
+                        updateLauncher,
+                        AppUpdateOptions.newBuilder(updateType).build()
                     )
                 }
             }
@@ -117,15 +116,14 @@ class UpdateManager(private val context: Context) {
     /**
      * Call this in Activity.onResume to re-trigger immediate updates if they were canceled
      */
-    fun checkOngoingUpdate(activity: Activity) {
+    fun checkOngoingUpdate(updateLauncher: androidx.activity.result.ActivityResultLauncher<androidx.activity.result.IntentSenderRequest>) {
         appUpdateManager.appUpdateInfo.addOnSuccessListener { appUpdateInfo ->
             if (appUpdateInfo.updateAvailability() == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS) {
                 // Resume an immediate update
                 appUpdateManager.startUpdateFlowForResult(
                     appUpdateInfo,
-                    activity,
-                    AppUpdateOptions.newBuilder(AppUpdateType.IMMEDIATE).build(),
-                    UPDATE_REQUEST_CODE
+                    updateLauncher,
+                    AppUpdateOptions.newBuilder(AppUpdateType.IMMEDIATE).build()
                 )
             }
         }
