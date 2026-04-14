@@ -8,9 +8,11 @@ import android.app.AppOpsManager.MODE_ALLOWED
 import android.app.AppOpsManager.OPSTR_GET_USAGE_STATS
 import android.app.Application
 import android.app.usage.UsageStatsManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.net.Uri
 import android.os.Build
@@ -133,6 +135,15 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val packageRemovedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_PACKAGE_REMOVED) {
+                if (intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) return
+                viewModel.refreshList()
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
@@ -143,10 +154,21 @@ class MainActivity : ComponentActivity() {
         ratingManager = RatingManager(this)
         ratingManager.initializeFirstLaunch()
 
+        val filter = IntentFilter(Intent.ACTION_PACKAGE_REMOVED).apply {
+            addDataScheme("package")
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(packageRemovedReceiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(packageRemovedReceiver, filter)
+        }
+
         // App Open Ad & Rating - Foreground Resumption Logic
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
             private var isFirstStart = true
             override fun onStart(owner: LifecycleOwner) {
+                // Auto-refresh lists and detect uninstalled apps on resume
+                viewModel.refreshHistory()
                 // Wait for the ad to be dismissed or failed before showing the rating prompt
                 AdManager.showAppOpenAdIfAvailable {
                     if (!isFirstStart) {
@@ -258,6 +280,15 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        try {
+            unregisterReceiver(packageRemovedReceiver)
+        } catch (e: Exception) {
+            // Ignored
         }
     }
 
@@ -809,7 +840,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 // A package was truly uninstalled if it was present before but is absent now
                 val packagesAfter = fullAppList.map { it.packageName }.toSet()
                 val somethingWasRemoved = (packagesBefore - packagesAfter).isNotEmpty()
-                onCompletion.invoke(somethingWasRemoved)
+                withContext(Dispatchers.Main) {
+                    onCompletion.invoke(somethingWasRemoved)
+                }
             }
 
             // Save name mapping so external uninstalls can be identified on next open
@@ -1065,103 +1098,7 @@ fun UninstallerApp(
         prevScreen = currentScreen
     }
 
-    // ── Rewarded ad dialog state ─────────────────────────────────────────────
-    var showBulkAdDialog by remember { mutableStateOf(false) }
-    var showAdLoader by remember { mutableStateOf(false) }
-    var pendingBulkAction by remember { mutableStateOf<(() -> Unit)?>(null) }
 
-    if (showBulkAdDialog) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showBulkAdDialog = false },
-            icon = {
-                Icon(Icons.Default.Star, null, tint = EmeraldGreen, modifier = Modifier.size(32.dp))
-            },
-            title = {
-                Text("Bulk Uninstall", fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
-            },
-            text = {
-                Text(
-                    "Bulk uninstall is a premium feature.\nWatch a short ad to unlock it for this session.",
-                    textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showBulkAdDialog = false
-                        if (AdManager.isRewardedReady()) {
-                            AdManager.showRewarded(
-                                onRewardEarned = {
-                                    pendingBulkAction?.invoke()
-                                    pendingBulkAction = null
-                                },
-                                onDismiss = { pendingBulkAction = null }
-                            )
-                        } else {
-                            showAdLoader = true
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text("Watch Ad", fontWeight = FontWeight.Black)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showBulkAdDialog = false; pendingBulkAction = null }) {
-                    Text("Cancel", color = Color.Gray, fontWeight = FontWeight.Black)
-                }
-            },
-            shape = RoundedCornerShape(24.dp)
-        )
-    }
-    
-    // ── Rewarded Failover Loader (Option B: Gold Standard) ────────────────────
-    if (showAdLoader) {
-        // Trigger ad load just in case it wasn't fetching
-        LaunchedEffect(Unit) {
-            // Wait up to 3.5 seconds
-            val timeoutMillis = 3500L
-            val startTime = System.currentTimeMillis()
-            
-            while (System.currentTimeMillis() - startTime < timeoutMillis) {
-                if (AdManager.isRewardedReady()) {
-                    showAdLoader = false
-                    AdManager.showRewarded(
-                        onRewardEarned = {
-                            pendingBulkAction?.invoke()
-                            pendingBulkAction = null
-                        },
-                        onDismiss = { pendingBulkAction = null }
-                    )
-                    return@LaunchedEffect
-                }
-                kotlinx.coroutines.delay(200) // Poll for ad readiness
-            }
-            
-            // Timeout reached: Ad Policy Enforcement - Don't proceed for free
-            showAdLoader = false
-            android.widget.Toast.makeText(context, "Ad not available. Please try again later.", android.widget.Toast.LENGTH_SHORT).show()
-            pendingBulkAction = null
-        }
-
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { /* Modal: force wait or timeout */ },
-            confirmButton = {},
-            title = {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                    androidx.compose.material3.CircularProgressIndicator(color = EmeraldGreen)
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("Loading Ad...", fontWeight = FontWeight.Bold)
-                }
-            },
-            text = {
-                Text("Trying to load a rewarded ad. Please wait a moment...", textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-            },
-            shape = RoundedCornerShape(24.dp)
-        )
-    }
 
     // ── Update Available Dialog (Fallback Path) ──────────────────────────────
     if (showUpdateDialog) {
@@ -1362,15 +1299,17 @@ fun UninstallerApp(
                                 })
                             },
                             onBulkUninstall = { apps, doUninstall ->
-                                if (apps.size <= 1 && AdManager.rewardedUnlockActive) {
+                                if (AdManager.isRewardedReady()) {
+                                    AdManager.showRewarded(
+                                        onRewardEarned = {
+                                            doUninstall()
+                                            activity?.showActionRatingPrompt()
+                                        },
+                                        onDismiss = {}
+                                    )
+                                } else {
                                     doUninstall()
                                     activity?.showActionRatingPrompt()
-                                } else {
-                                    pendingBulkAction = {
-                                        doUninstall()
-                                        activity?.showActionRatingPrompt()
-                                    }
-                                    showBulkAdDialog = true
                                 }
                             },
                             isBulkAdUnlocked = AdManager.rewardedUnlockActive,
@@ -1575,6 +1514,7 @@ fun HomeScreen(
     val pagerState = rememberPagerState(pageCount = { 2 })
     var previousPage by remember { mutableIntStateOf(0) }
     val coroutineScope = rememberCoroutineScope()
+    val isRewardedReady by AdManager.isRewardedReadyFlow.collectAsState()
     
     LaunchedEffect(pagerState.currentPage) {
         if (pagerState.currentPage != previousPage) {
@@ -1904,11 +1844,33 @@ fun HomeScreen(
                 BulkActionBar(
                     count = selectedApps.size,
                     reclaimedSpace = formatSize(selectedApps.sumOf { it.sizeBytes }),
-                    isAdUnlocked = selectedApps.size <= 1 && isBulkAdUnlocked,
+                    isAdUnlocked = if (selectedApps.size == 1) !isRewardedReady || isBulkAdUnlocked else !isRewardedReady,
                     onUninstall = {
                         val appsToUninstall = selectedApps.toList()
-                        onBulkUninstall(appsToUninstall) {
-                            appsToUninstall.forEach { onUninstallRequest(it) }
+                        if (appsToUninstall.size == 1) {
+                            val action = {
+                                onUninstallRequest(appsToUninstall.first())
+                                selectedApps.clear()
+                                onSelectionChanged(0)
+                            }
+                            if (AdManager.isRewardedReady() && !isBulkAdUnlocked) {
+                                AdManager.showRewarded(onRewardEarned = action, onDismiss = {})
+                            } else {
+                                action()
+                            }
+                        } else {
+                            onBulkUninstall(appsToUninstall) {
+                                appsToUninstall.forEach { 
+                                    try {
+                                        val intent = Intent(Intent.ACTION_DELETE).apply {
+                                            data = Uri.parse("package:${it.packageName}")
+                                        }
+                                        context.startActivity(intent)
+                                    } catch (e: Exception) {}
+                                }
+                                selectedApps.clear()
+                                onSelectionChanged(0)
+                            }
                         }
                     },
                     onSelectAll = {

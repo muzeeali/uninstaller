@@ -14,6 +14,8 @@ import com.google.android.gms.ads.interstitial.InterstitialAd
 import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback
 import com.google.android.gms.ads.rewarded.RewardedAd
 import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 private const val TAG = "AdManager"
 
@@ -75,6 +77,9 @@ object AdManager {
 
     private var rewardedAd: RewardedAd? = null
     private var rewardedLoading = false
+    
+    private val _isRewardedReadyFlow = MutableStateFlow(false)
+    val isRewardedReadyFlow = _isRewardedReadyFlow.asStateFlow()
 
     // ─── Initialization ──────────────────────────────────────────────────────
 
@@ -285,10 +290,12 @@ object AdManager {
                 override fun onAdLoaded(ad: RewardedAd) {
                     rewardedAd = ad
                     rewardedLoading = false
+                    _isRewardedReadyFlow.value = true
                     Log.d(TAG, "Rewarded ad loaded")
                 }
                 override fun onAdFailedToLoad(error: LoadAdError) {
                     rewardedLoading = false
+                    _isRewardedReadyFlow.value = false
                     Log.w(TAG, "Rewarded failed: ${error.message}")
                 }
             }
@@ -310,23 +317,29 @@ object AdManager {
             return
         }
         isAdShowing = true
+        var isRewardEarned = false
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
             override fun onAdDismissedFullScreenContent() {
                 isAdShowing = false
                 rewardedAd = null
+                _isRewardedReadyFlow.value = false
                 loadRewarded()
+                if (isRewardEarned) {
+                    onRewardEarned()
+                }
                 onDismiss()
             }
             override fun onAdFailedToShowFullScreenContent(error: AdError) {
                 isAdShowing = false
                 rewardedAd = null
+                _isRewardedReadyFlow.value = false
                 loadRewarded()
                 onDismiss()
             }
         }
         ad.show(activity) { _ ->
             rewardedUnlockActive = true
-            onRewardEarned()
+            isRewardEarned = true
         }
     }
 
