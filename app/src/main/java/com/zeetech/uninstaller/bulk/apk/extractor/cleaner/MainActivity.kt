@@ -391,8 +391,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     val appVersionName: String = try {
         val pInfo = application.packageManager.getPackageInfo(application.packageName, 0)
-        pInfo.versionName ?: "1.0.4"
-    } catch (e: Exception) { "1.0.4" }
+        pInfo.versionName ?: "1.0.5"
+    } catch (e: Exception) { "1.0.5" }
 
     private var discoveredJunk = listOf<File>()
 
@@ -674,29 +674,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun performCleanup(haptics: androidx.compose.ui.hapticfeedback.HapticFeedback? = null) {
         viewModelScope.launch(Dispatchers.IO) {
             haptics?.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-            var spaceReclaimed = 0L
-            val total = discoveredJunk.size
-            val appCtx = getApplication<Application>()
-            discoveredJunk.forEachIndexed { index, file ->
-                _uiState.emit(AppUiState.Scanning(index.toFloat() / total, appCtx.getString(R.string.state_surgical_removal, file.name)))
-                try {
-                    val size = if (file.isDirectory) calculateFolderSize(file) else file.length()
-                    if (file.isDirectory) file.deleteRecursively() else file.delete()
-                    spaceReclaimed += size
-                } catch (e: Exception) { /* Ignore deletion errors */ }
-            }
-            
-            _uiState.emit(AppUiState.CleanFinished)
+
+            // Show the 100% Optimized screen immediately — don't make the user
+            // watch a file-deletion progress bar. Deletion runs silently below.
+            val filesToDelete = discoveredJunk.toList()
             discoveredJunk = emptyList()
-            
-            // Trigger 3: After Deep Clean Success
-            (ProcessLifecycleOwner.get().lifecycle as? LifecycleOwner)?.let { _ ->
-                // Since this is inside ViewModel, we can trigger via Activity if it's the current context
-                // Or better, let the UI observe the CleanFinished state and trigger it there.
+            _uiState.emit(AppUiState.CleanFinished)
+
+            // Delete files in the background while the finished screen is visible.
+            // refreshList() is intentionally NOT called here — it would overwrite
+            // CleanFinished with Loading/Success before the user taps DONE.
+            filesToDelete.forEach { file ->
+                try {
+                    if (file.isDirectory) file.deleteRecursively() else file.delete()
+                } catch (e: Exception) { /* ignore */ }
             }
-            
-            // Reload storage stats and app list after a clean-up
-            refreshList()
         }
     }
 
@@ -711,13 +703,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun backToHome() {
-        // Restore cached list instantly — no reload needed
-        val cached = cachedSuccessState
-        if (cached != null) {
-            viewModelScope.launch { _uiState.emit(cached) }
-        } else {
-            loadApps(force = true)
-        }
+        // Always force a fresh reload so storage stats reflect any cleanup that ran.
+        loadApps(force = true)
     }
 
     private fun loadApps(force: Boolean = false, onCompletion: ((Boolean) -> Unit)? = null) {
@@ -1251,12 +1238,13 @@ fun UninstallerApp(
                 )
                 is AppUiState.CleanFinished -> {
                     val activity = context.findActivity() as? MainActivity
-                    LaunchedEffect(Unit) {
+                    // Ad fires when the user intentionally taps DONE, not automatically
+                    CleanFinishedScreen {
                         AdManager.showInterstitial(forceAlways = true, onDismiss = {
                             activity?.showActionRatingPrompt()
+                            viewModel.backToHome()
                         })
                     }
-                    CleanFinishedScreen { viewModel.backToHome() }
                 }
                 is AppUiState.Success -> {
                     val sortBy by viewModel.sortBy.collectAsState()
@@ -2369,43 +2357,93 @@ fun DeepCleanProgressScreen(progress: Float, currentTask: String) {
 @Composable
 fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, onCancel: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Surface(shape = CircleShape, color = LogoPurple.copy(alpha = 0.1f), modifier = Modifier.size(120.dp)) {
-                Icon(Icons.Default.Info, null, Modifier.padding(24.dp), tint = EmeraldGreen)
-            }
-            Spacer(modifier = Modifier.height(32.dp))
-            Row {
-                Text("ANALYSIS ", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = LogoPurple)
-                Text("RESULT", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = EmeraldGreen)
-            }
-            Text("Surgical cleanup ready to reclaim", color = Color.Gray)
-            Text(space, fontSize = 56.sp, fontWeight = FontWeight.Black, color = LogoPurple)
-            Text("from $itemsCount cached zones", style = MaterialTheme.typography.bodyMedium, color = EmeraldGreen, fontWeight = FontWeight.Bold)
-            
-            Spacer(modifier = Modifier.height(32.dp))
-            Button(
-                onClick = {
-                    AdManager.showInterstitial(onDismiss = { onClean() })
-                }, 
-                modifier = Modifier.fillMaxWidth().height(60.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
-                shape = RoundedCornerShape(16.dp),
-                elevation = ButtonDefaults.buttonElevation(defaultElevation = 8.dp)
+        if (itemsCount == 0) {
+            // ── Nothing to clean: device is already optimized ─────────────────
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text("CLEAN NOW", fontWeight = FontWeight.Black, fontSize = 20.sp, letterSpacing = 1.sp)
+                // Animated pulse on the check icon
+                val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+                val scale by infiniteTransition.animateFloat(
+                    initialValue = 1f, targetValue = 1.08f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(900, easing = FastOutSlowInEasing),
+                        repeatMode = RepeatMode.Reverse
+                    ),
+                    label = "scale"
+                )
+                Surface(
+                    shape = CircleShape,
+                    color = EmeraldGreen.copy(alpha = 0.12f),
+                    modifier = Modifier.size(130.dp).graphicsLayer(scaleX = scale, scaleY = scale)
+                ) {
+                    Icon(Icons.Default.CheckCircle, null, Modifier.padding(26.dp), tint = EmeraldGreen)
+                }
+                Spacer(modifier = Modifier.height(28.dp))
+                Text("100%", fontSize = 64.sp, fontWeight = FontWeight.Black, color = EmeraldGreen)
+                Text("OPTIMIZED", fontSize = 14.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 3.sp)
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    "Your device is already clean.\nNo junk files were found.",
+                    color = Color.Gray,
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(modifier = Modifier.height(36.dp))
+                Button(
+                    onClick = {
+                        AdManager.showInterstitial(onDismiss = { onCancel() })
+                    },
+                    modifier = Modifier.fillMaxWidth().height(60.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = LogoPurple),
+                    shape = RoundedCornerShape(20.dp),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp)
+                ) {
+                    Text("DONE", fontWeight = FontWeight.Black, fontSize = 18.sp, letterSpacing = 2.sp)
+                }
             }
-            Spacer(modifier = Modifier.height(16.dp))
-            TextButton(onClick = onCancel) {
-                Text("DISCARD", color = Color.Gray.copy(alpha = 0.6f), fontWeight = FontWeight.Bold)
+        } else {
+            // ── Items found: show summary & start clean ───────────────────────
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Surface(shape = CircleShape, color = LogoPurple.copy(alpha = 0.1f), modifier = Modifier.size(120.dp)) {
+                    Icon(Icons.Default.Info, null, Modifier.padding(24.dp), tint = EmeraldGreen)
+                }
+                Spacer(modifier = Modifier.height(32.dp))
+                Row {
+                    Text("ANALYSIS ", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = LogoPurple)
+                    Text("RESULT", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = EmeraldGreen)
+                }
+                Text("Surgical cleanup ready to reclaim", color = Color.Gray)
+                Text(space, fontSize = 56.sp, fontWeight = FontWeight.Black, color = LogoPurple)
+                Text("from $itemsCount cached zones", style = MaterialTheme.typography.bodyMedium, color = EmeraldGreen, fontWeight = FontWeight.Bold)
+
+                Spacer(modifier = Modifier.height(32.dp))
+                Button(
+                    // No ad before cleanup — ad fires on DONE after cleaning finishes
+                    onClick = onClean,
+                    modifier = Modifier.fillMaxWidth().height(60.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
+                    shape = RoundedCornerShape(16.dp),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 8.dp)
+                ) {
+                    Text("CLEAN NOW", fontWeight = FontWeight.Black, fontSize = 20.sp, letterSpacing = 1.sp)
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                TextButton(onClick = onCancel) {
+                    Text("DISCARD", color = Color.Gray.copy(alpha = 0.6f), fontWeight = FontWeight.Bold)
+                }
             }
         }
 
-        // Banner ad anchored to absolute bottom (Matching Home layout)
+        // Banner ad anchored to absolute bottom
         Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
             BannerAdView()
         }
