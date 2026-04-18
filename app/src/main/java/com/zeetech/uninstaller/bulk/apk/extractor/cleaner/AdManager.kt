@@ -118,17 +118,10 @@ object AdManager {
         )
     }
 
-    private var lastAppOpenAdShownTime = 0L
-    private const val APP_OPEN_AD_INTERVAL_MS = 4L * 60 * 60 * 1000L // 4 hours
 
     fun showAppOpenAdIfAvailable(onDismiss: () -> Unit = {}) {
         if (DEBUG_SUPPRESS_ADS) {
             Log.d(TAG, "Ad skipped (DEBUG_SUPPRESS_ADS=true)")
-            onDismiss()
-            return
-        }
-        val currentTime = System.currentTimeMillis()
-        if (currentTime - lastAppOpenAdShownTime < APP_OPEN_AD_INTERVAL_MS && lastAppOpenAdShownTime != 0L) {
             onDismiss()
             return
         }
@@ -141,7 +134,6 @@ object AdManager {
             override fun onAdDismissedFullScreenContent() {
                 isAdShowing = false
                 appOpenAd = null
-                lastAppOpenAdShownTime = System.currentTimeMillis()
                 loadAppOpen()
                 onDismiss()
             }
