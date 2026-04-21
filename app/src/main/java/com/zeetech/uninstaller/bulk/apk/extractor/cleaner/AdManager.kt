@@ -188,7 +188,7 @@ object AdManager {
                     appOpenAd = ad
                     appOpenAdLoading = false
                     Logger.d(TAG, "App open ad loaded")
-                    if (pendingShowAppOpenOnLoad) {
+                    if (pendingShowAppOpenOnLoad && !appOpenShownThisColdStart) {
                         pendingShowAppOpenOnLoad = false
                         // show when available
                         // run on UI thread via current activity if possible
@@ -209,7 +209,7 @@ object AdManager {
 
     fun showAppOpenAdIfAvailable(onDismiss: () -> Unit = {}) {
         if (DEBUG_SUPPRESS_ADS) { onDismiss(); return }
-        // Allow App Open to show on every foreground entry (no cold-start-only guard)
+        if (appOpenShownThisColdStart) { onDismiss(); return }
         if (!canShowFullScreen()) { onDismiss(); return }
         val activity = currentActivity() ?: run { onDismiss(); return }
         val ad = appOpenAd ?: run { onDismiss(); return }
@@ -219,7 +219,7 @@ object AdManager {
             override fun onAdDismissedFullScreenContent() {
                 isAdShowing = false
                 appOpenAd = null
-                // do not set a cold-start-only flag; allow future foreground shows
+                appOpenShownThisColdStart = true
                 loadAppOpen()
                 onDismiss()
             }
