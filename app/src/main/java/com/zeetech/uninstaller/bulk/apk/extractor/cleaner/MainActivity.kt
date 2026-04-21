@@ -2462,9 +2462,9 @@ fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, on
 @Composable
 fun BannerAdView() {
     val context = LocalContext.current
-    val isDarkTheme = isSystemInDarkTheme()
-    val backgroundColor = if (isDarkTheme) Color.Black else Color.White
-    val contentColor = if (isDarkTheme) Color.White else Color.Black
+    // Use MaterialTheme colorScheme so banner follows the app's theme toggle
+    val backgroundColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+    val contentColor = MaterialTheme.colorScheme.onSurfaceVariant
     // Use centralized AdManager to create and manage banners
     val adView = remember { AdManager.createAdaptiveBanner(context) }
 
@@ -2478,8 +2478,9 @@ fun BannerAdView() {
             .wrapContentHeight()
             .navigationBarsPadding(),
         color = backgroundColor,
-        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
-        tonalElevation = 2.dp,
+        // Use no corner rounding for the banner container
+        shape = RoundedCornerShape(0.dp),
+        tonalElevation = 0.dp,
         shadowElevation = 0.dp
     ) {
         Column(
