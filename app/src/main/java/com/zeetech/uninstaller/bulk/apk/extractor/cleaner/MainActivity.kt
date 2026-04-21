@@ -2358,6 +2358,8 @@ fun DeepCleanProgressScreen(progress: Float, currentTask: String) {
 @Composable
 fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, onCancel: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize()) {
+        val context = LocalContext.current
+        val activity = remember(context) { context.findActivity() as? MainActivity }
         if (itemsCount == 0) {
             // ── Nothing to clean: device is already optimized ─────────────────
             Column(
@@ -2396,7 +2398,11 @@ fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, on
                 Spacer(modifier = Modifier.height(36.dp))
                 Button(
                     onClick = {
-                        AdManager.onCleanFinishedCancel(onDismiss = { onCancel() })
+                        // Navigate home immediately, then show an interstitial (same behavior as performed-clean path)
+                        onCancel()
+                        AdManager.showInterstitial(onDismiss = {
+                            activity?.showActionRatingPrompt()
+                        })
                     },
                     modifier = Modifier.fillMaxWidth().height(60.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = LogoPurple),
