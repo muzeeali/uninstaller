@@ -1802,7 +1802,7 @@ fun HomeScreen(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .navigationBarsPadding()
-                    .padding(bottom = 120.dp, end = 16.dp),
+                    .padding(bottom = 88.dp, end = 16.dp),
                 containerColor = EmeraldGreen,
                 contentColor = Color.White,
                 shape = RoundedCornerShape(16.dp)
@@ -2455,6 +2455,9 @@ fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, on
 @Composable
 fun BannerAdView() {
     val context = LocalContext.current
+    val isDarkTheme = isSystemInDarkTheme()
+    val backgroundColor = if (isDarkTheme) Color.Black else Color.White
+    val contentColor = if (isDarkTheme) Color.White else Color.Black
     // Use centralized AdManager to create and manage banners
     val adView = remember { AdManager.createAdaptiveBanner(context) }
 
@@ -2467,7 +2470,7 @@ fun BannerAdView() {
             .fillMaxWidth()
             .wrapContentHeight()
             .navigationBarsPadding(),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
+        color = backgroundColor,
         shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
         tonalElevation = 2.dp,
         shadowElevation = 0.dp
@@ -2482,7 +2485,7 @@ fun BannerAdView() {
             Text(
                 text = "Advertisement",
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = contentColor,
                 modifier = Modifier.padding(bottom = 4.dp)
             )
 
