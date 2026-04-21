@@ -331,6 +331,13 @@ class MainActivity : ComponentActivity() {
         // Icons are now preserved on disk and handled by Coil.
     }
 
+    override fun onStart() {
+        super.onStart()
+        // Bind activity earlier (onStart) so ProcessLifecycleOwner's onStart observers
+        // can access a valid Activity when attempting to show App Open ads.
+        AdManager.bindActivity(this)
+    }
+
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         // Icons are now stored on disk and managed by Coil, so no RAM clearing needed here.
