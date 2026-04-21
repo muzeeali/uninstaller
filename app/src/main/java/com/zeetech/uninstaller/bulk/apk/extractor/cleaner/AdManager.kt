@@ -3,7 +3,7 @@ package com.zeetech.uninstaller.bulk.apk.extractor.cleaner
 import android.app.Activity
 import android.content.Context
 import android.os.Bundle
-import android.util.Log
+// Logging routed through Logger to avoid debug output in production
 import java.lang.ref.WeakReference
 import com.google.android.gms.ads.AdError
 import com.google.android.gms.ads.AdRequest
@@ -65,6 +65,9 @@ object AdManager {
     private var appOpenAdLoading = false
     private var appOpenShownThisColdStart = false
     private var pendingShowAppOpenOnLoad = false
+    // Tracks whether the application lifecycle onStart has run at least once.
+    // Used by MainActivity to decide first-start behavior across Activity recreations.
+    var appLifecycleFirstStart = true
 
     // Interstitial
     private var interstitialAd: InterstitialAd? = null
@@ -97,7 +100,7 @@ object AdManager {
         // Mark that we want to show an App Open on this cold start when it's available
         pendingShowAppOpenOnLoad = true
         MobileAds.initialize(activity.applicationContext) {
-            Log.d(TAG, "MobileAds initialized")
+            Logger.d(TAG, "MobileAds initialized")
             // Request consent first (if UMP available), then load ads
             requestConsent(activity) {
                 loadInterstitial()
@@ -127,7 +130,7 @@ object AdManager {
                                     }
                                 },
                                 { error ->
-                                    Log.w(TAG, "Consent form load failed: ${error.message}")
+                                    Logger.w(TAG, "Consent form load failed: ${error.message}")
                                     isPersonalizedAdsAllowed = consentInformation.consentStatus == ConsentInformation.ConsentStatus.OBTAINED
                                     onComplete()
                                 }
@@ -137,17 +140,17 @@ object AdManager {
                             onComplete()
                         }
                     } catch (e: Exception) {
-                        Log.w(TAG, "Consent form flow failed: ${e.message}")
+                        Logger.w(TAG, "Consent form flow failed: ${e.message}")
                         onComplete()
                     }
                 },
                 { error ->
-                    Log.w(TAG, "Consent info update failed: ${error.message}")
+                    Logger.w(TAG, "Consent info update failed: ${error.message}")
                     onComplete()
                 }
             )
         } catch (e: Exception) {
-            Log.w(TAG, "UMP not available or error: ${e.message}")
+            Logger.w(TAG, "UMP not available or error: ${e.message}")
             onComplete()
         }
     }
@@ -184,7 +187,7 @@ object AdManager {
                 override fun onAdLoaded(ad: AppOpenAd) {
                     appOpenAd = ad
                     appOpenAdLoading = false
-                    Log.d(TAG, "App open ad loaded")
+                    Logger.d(TAG, "App open ad loaded")
                     if (pendingShowAppOpenOnLoad && !appOpenShownThisColdStart) {
                         pendingShowAppOpenOnLoad = false
                         // show when available
@@ -198,7 +201,7 @@ object AdManager {
                 }
                 override fun onAdFailedToLoad(error: LoadAdError) {
                     appOpenAdLoading = false
-                    Log.w(TAG, "App open ad failed: ${error.message}")
+                    Logger.w(TAG, "App open ad failed: ${error.message}")
                 }
             }
         )
@@ -243,11 +246,11 @@ object AdManager {
                 override fun onAdLoaded(ad: InterstitialAd) {
                     interstitialAd = ad
                     interstitialLoading = false
-                    Log.d(TAG, "Interstitial loaded")
+                    Logger.d(TAG, "Interstitial loaded")
                 }
                 override fun onAdFailedToLoad(error: LoadAdError) {
                     interstitialLoading = false
-                    Log.w(TAG, "Interstitial failed: ${error.message}")
+                    Logger.w(TAG, "Interstitial failed: ${error.message}")
                 }
             }
         )
@@ -302,12 +305,12 @@ object AdManager {
                     rewardedAd = ad
                     rewardedLoading = false
                     _isRewardedReadyFlow.value = true
-                    Log.d(TAG, "Rewarded ad loaded")
+                    Logger.d(TAG, "Rewarded ad loaded")
                 }
                 override fun onAdFailedToLoad(error: LoadAdError) {
                     rewardedLoading = false
                     _isRewardedReadyFlow.value = false
-                    Log.w(TAG, "Rewarded failed: ${error.message}")
+                    Logger.w(TAG, "Rewarded failed: ${error.message}")
                 }
             }
         )
