@@ -2,10 +2,13 @@ package com.zeetech.uninstaller.bulk.apk.extractor.cleaner
 
 import android.app.Activity
 import android.content.Context
+import android.os.Bundle
 import android.util.Log
 import java.lang.ref.WeakReference
 import com.google.android.gms.ads.AdError
 import com.google.android.gms.ads.AdRequest
+import com.google.ads.mediation.admob.AdMobAdapter
+import com.zeetech.uninstaller.BuildConfig
 import com.google.android.gms.ads.FullScreenContentCallback
 import com.google.android.gms.ads.LoadAdError
 import com.google.android.gms.ads.MobileAds
@@ -16,6 +19,11 @@ import com.google.android.gms.ads.rewarded.RewardedAd
 import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import com.google.android.ump.ConsentDebugSettings
+import com.google.android.ump.ConsentForm
+import com.google.android.ump.ConsentInformation
+import com.google.android.ump.ConsentRequestParameters
+import com.google.android.ump.UserMessagingPlatform
 
 private const val TAG = "AdManager"
 
@@ -40,11 +48,14 @@ object AdManager {
     // Application context
     private var appCtx: Context? = null
 
-    // Ad unit IDs
-    private const val AD_UNIT_APP_OPEN     = "ca-app-pub-6425054459696619/3748084648"
-    private const val AD_UNIT_INTERSTITIAL = "ca-app-pub-6425054459696619/8013363790"
-    private const val AD_UNIT_REWARDED     = "ca-app-pub-6425054459696619/1377906329"
-    private const val AD_UNIT_BANNER       = "ca-app-pub-6425054459696619/9326445462"
+    // Ad unit IDs (use test IDs in debug builds)
+    private val AD_UNIT_APP_OPEN: String = if (BuildConfig.DEBUG) "ca-app-pub-3940256099942544/3419835294" else "ca-app-pub-6425054459696619/3748084648"
+    private val AD_UNIT_INTERSTITIAL: String = if (BuildConfig.DEBUG) "ca-app-pub-3940256099942544/1033173712" else "ca-app-pub-6425054459696619/8013363790"
+    private val AD_UNIT_REWARDED: String = if (BuildConfig.DEBUG) "ca-app-pub-3940256099942544/5224354917" else "ca-app-pub-6425054459696619/1377906329"
+    private val AD_UNIT_BANNER: String = if (BuildConfig.DEBUG) "ca-app-pub-3940256099942544/6300978111" else "ca-app-pub-6425054459696619/9326445462"
+
+    // Consent / personalization flags
+    private var isPersonalizedAdsAllowed: Boolean = true
 
     // Single-active ad lock
     private var isAdShowing = false
@@ -86,9 +97,65 @@ object AdManager {
         bindActivity(activity)
         MobileAds.initialize(activity.applicationContext) {
             Log.d(TAG, "MobileAds initialized")
-            loadInterstitial()
-            loadRewarded()
-            loadAppOpen()
+            // Request consent first (if UMP available), then load ads
+            requestConsent(activity) {
+                loadInterstitial()
+                loadRewarded()
+                loadAppOpen()
+            }
+        }
+    }
+
+    // --- UMP consent helper
+    private fun requestConsent(activity: Activity, onComplete: () -> Unit) {
+        try {
+            val params = ConsentRequestParameters.Builder().build()
+            val consentInformation = UserMessagingPlatform.getConsentInformation(activity)
+            consentInformation.requestConsentInfoUpdate(
+                activity,
+                params,
+                object : ConsentInformation.OnConsentInfoUpdateSuccessListener {
+                    override fun onConsentInfoUpdated() {
+                        try {
+                            if (consentInformation.isConsentFormAvailable) {
+                                UserMessagingPlatform.loadConsentForm(
+                                    activity,
+                                    object : UserMessagingPlatform.OnConsentFormLoadSuccessListener {
+                                        override fun onConsentFormLoadSuccess(form: ConsentForm) {
+                                            form.show(activity) { /* dismissed */
+                                                isPersonalizedAdsAllowed = consentInformation.consentStatus == ConsentInformation.ConsentStatus.OBTAINED
+                                                onComplete()
+                                            }
+                                        }
+                                    },
+                                    object : UserMessagingPlatform.OnConsentFormLoadFailureListener {
+                                        override fun onConsentFormLoadFailure(error: com.google.android.ump.FormError) {
+                                            Log.w(TAG, "Consent form load failed: ${error.message}")
+                                            isPersonalizedAdsAllowed = consentInformation.consentStatus == ConsentInformation.ConsentStatus.OBTAINED
+                                            onComplete()
+                                        }
+                                    }
+                                )
+                            } else {
+                                isPersonalizedAdsAllowed = consentInformation.consentStatus == ConsentInformation.ConsentStatus.OBTAINED
+                                onComplete()
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Consent form flow failed: ${e.message}")
+                            onComplete()
+                        }
+                    }
+                },
+                object : ConsentInformation.OnConsentInfoUpdateFailureListener {
+                    override fun onConsentInfoUpdateFailure(error: com.google.android.ump.FormError) {
+                        Log.w(TAG, "Consent info update failed: ${error.message}")
+                        onComplete()
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "UMP not available or error: ${e.message}")
+            onComplete()
         }
     }
 
@@ -111,6 +178,17 @@ object AdManager {
         fullScreenTimestamps.add(now)
     }
 
+    // --- AdRequest builder honoring consent
+    private fun buildAdRequest(): AdRequest {
+        val builder = AdRequest.Builder()
+        if (!isPersonalizedAdsAllowed) {
+            val extras = Bundle()
+            extras.putString("npa", "1")
+            builder.addNetworkExtrasBundle(AdMobAdapter::class.java, extras)
+        }
+        return builder.build()
+    }
+
     // --- App Open
     private fun loadAppOpen() {
         val ctx = appCtx ?: return
@@ -119,7 +197,7 @@ object AdManager {
         AppOpenAd.load(
             ctx,
             AD_UNIT_APP_OPEN,
-            AdRequest.Builder().build(),
+            buildAdRequest(),
             object : AppOpenAd.AppOpenAdLoadCallback() {
                 override fun onAdLoaded(ad: AppOpenAd) {
                     appOpenAd = ad
@@ -169,7 +247,7 @@ object AdManager {
         InterstitialAd.load(
             ctx,
             AD_UNIT_INTERSTITIAL,
-            AdRequest.Builder().build(),
+            buildAdRequest(),
             object : InterstitialAdLoadCallback() {
                 override fun onAdLoaded(ad: InterstitialAd) {
                     interstitialAd = ad
@@ -228,7 +306,7 @@ object AdManager {
         RewardedAd.load(
             ctx,
             AD_UNIT_REWARDED,
-            AdRequest.Builder().build(),
+            buildAdRequest(),
             object : RewardedAdLoadCallback() {
                 override fun onAdLoaded(ad: RewardedAd) {
                     rewardedAd = ad
@@ -297,7 +375,7 @@ object AdManager {
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT
             )
         }
-        adView.loadAd(AdRequest.Builder().build())
+        adView.loadAd(buildAdRequest())
         return adView
     }
 
