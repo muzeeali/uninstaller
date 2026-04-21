@@ -7,8 +7,10 @@ import android.util.Log
 import java.lang.ref.WeakReference
 import com.google.android.gms.ads.AdError
 import com.google.android.gms.ads.AdRequest
+import com.google.android.gms.ads.AdSize
+import com.google.android.gms.ads.AdView
 import com.google.ads.mediation.admob.AdMobAdapter
-import com.zeetech.uninstaller.BuildConfig
+// No import needed for BuildConfig in same package
 import com.google.android.gms.ads.FullScreenContentCallback
 import com.google.android.gms.ads.LoadAdError
 import com.google.android.gms.ads.MobileAds
@@ -114,43 +116,35 @@ object AdManager {
             consentInformation.requestConsentInfoUpdate(
                 activity,
                 params,
-                object : ConsentInformation.OnConsentInfoUpdateSuccessListener {
-                    override fun onConsentInfoUpdated() {
-                        try {
-                            if (consentInformation.isConsentFormAvailable) {
-                                UserMessagingPlatform.loadConsentForm(
-                                    activity,
-                                    object : UserMessagingPlatform.OnConsentFormLoadSuccessListener {
-                                        override fun onConsentFormLoadSuccess(form: ConsentForm) {
-                                            form.show(activity) { /* dismissed */
-                                                isPersonalizedAdsAllowed = consentInformation.consentStatus == ConsentInformation.ConsentStatus.OBTAINED
-                                                onComplete()
-                                            }
-                                        }
-                                    },
-                                    object : UserMessagingPlatform.OnConsentFormLoadFailureListener {
-                                        override fun onConsentFormLoadFailure(error: com.google.android.ump.FormError) {
-                                            Log.w(TAG, "Consent form load failed: ${error.message}")
-                                            isPersonalizedAdsAllowed = consentInformation.consentStatus == ConsentInformation.ConsentStatus.OBTAINED
-                                            onComplete()
-                                        }
+                {
+                    try {
+                        if (consentInformation.isConsentFormAvailable) {
+                            UserMessagingPlatform.loadConsentForm(
+                                activity,
+                                { form ->
+                                    form.show(activity) { /* dismissed */
+                                        isPersonalizedAdsAllowed = consentInformation.consentStatus == ConsentInformation.ConsentStatus.OBTAINED
+                                        onComplete()
                                     }
-                                )
-                            } else {
-                                isPersonalizedAdsAllowed = consentInformation.consentStatus == ConsentInformation.ConsentStatus.OBTAINED
-                                onComplete()
-                            }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Consent form flow failed: ${e.message}")
+                                },
+                                { error ->
+                                    Log.w(TAG, "Consent form load failed: ${error.message}")
+                                    isPersonalizedAdsAllowed = consentInformation.consentStatus == ConsentInformation.ConsentStatus.OBTAINED
+                                    onComplete()
+                                }
+                            )
+                        } else {
+                            isPersonalizedAdsAllowed = consentInformation.consentStatus == ConsentInformation.ConsentStatus.OBTAINED
                             onComplete()
                         }
-                    }
-                },
-                object : ConsentInformation.OnConsentInfoUpdateFailureListener {
-                    override fun onConsentInfoUpdateFailure(error: com.google.android.ump.FormError) {
-                        Log.w(TAG, "Consent info update failed: ${error.message}")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Consent form flow failed: ${e.message}")
                         onComplete()
                     }
+                },
+                { error ->
+                    Log.w(TAG, "Consent info update failed: ${error.message}")
+                    onComplete()
                 }
             )
         } catch (e: Exception) {

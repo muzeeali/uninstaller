@@ -2205,7 +2205,7 @@ fun AppActionDialog(
                     InfoBox(Modifier.weight(1f), stringResource(R.string.info_updated), updateDate, Icons.Default.Refresh)
                 }
                 Spacer(Modifier.height(6.dp))
-                InfoBox(Modifier.fillMaxWidth(), stringResource(R.string.info_source), source, Icons.Default.List)
+                InfoBox(Modifier.fillMaxWidth(), stringResource(R.string.info_source), source, Icons.AutoMirrored.Filled.List)
             }
         },
         shape = RoundedCornerShape(32.dp),
@@ -2463,7 +2463,7 @@ fun BannerAdView() {
 
     AndroidView(
         modifier = Modifier.fillMaxWidth(),
-        factory = { adView }
+        factory = { _ -> adView }
     )
 }
 
@@ -2801,7 +2801,7 @@ fun SettingsScreen(viewModel: AppViewModel, ratingManager: RatingManager) {
         item { 
             SettingsGroup(stringResource(R.string.group_support)) {
                 SettingsItem(
-                    icon = Icons.Default.List,
+                    icon = Icons.AutoMirrored.Filled.List,
                     label = stringResource(R.string.item_more_apps),
                     onClick = {
                         val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/developer?id=ZeeTech+Solutions+Pvt.+Ltd.&hl=en"))
