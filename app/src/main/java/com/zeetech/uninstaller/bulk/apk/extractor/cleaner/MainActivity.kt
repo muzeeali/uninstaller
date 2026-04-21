@@ -1557,7 +1557,8 @@ fun HomeScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        // Reduce horizontal inset so app list rows span closer to screen edges
+        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp)) {
             // 1. Unified Search & Sort Row — same height as toggle row (36dp)
             Row(
                 modifier = Modifier.fillMaxWidth().height(36.dp),
@@ -1947,7 +1948,7 @@ fun AppRow(app: AppInfo, isIconCached: Boolean, isSelected: Boolean, onToggle: (
         border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, EmeraldGreen.copy(alpha = 0.3f)) else null
     ) {
         Row(
-            modifier = Modifier.padding(12.dp).graphicsLayer(alpha = if (canUninstall) 1.0f else 0.5f),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp).graphicsLayer(alpha = if (canUninstall) 1.0f else 0.5f),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Left Side: Checkbox
