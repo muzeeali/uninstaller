@@ -2478,24 +2478,15 @@ fun BannerAdView() {
         onDispose { AdManager.destroyBanner(adView) }
     }
 
-    // Render ad view directly without a Surface background so the native AdView
-    // isn't double-wrapped by a Compose background. This lets the ad creative
-    // appear as provided by the SDK while keeping a small label above it.
+    // Render the native AdView directly with no surrounding label or padding so
+    // there's no visible cover around the ad creative.
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .wrapContentHeight()
-            .navigationBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .navigationBarsPadding(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            text = "Advertisement",
-            style = MaterialTheme.typography.labelSmall,
-            color = contentColor,
-            modifier = Modifier.padding(bottom = 4.dp)
-        )
-
         AndroidView(
             modifier = Modifier
                 .fillMaxWidth()
