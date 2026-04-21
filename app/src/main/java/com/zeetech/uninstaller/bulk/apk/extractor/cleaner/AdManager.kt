@@ -20,6 +20,7 @@ import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback
 import com.google.android.gms.ads.rewarded.RewardedAd
 import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback
 import kotlinx.coroutines.flow.MutableStateFlow
+import android.content.SharedPreferences
 import kotlinx.coroutines.flow.asStateFlow
 import com.google.android.ump.ConsentDebugSettings
 import com.google.android.ump.ConsentForm
@@ -34,10 +35,7 @@ private const val AD_UNIT_APP_OPEN     = "ca-app-pub-6425054459696619/3748084648
 private const val AD_UNIT_INTERSTITIAL = "ca-app-pub-6425054459696619/8013363790"
 private const val AD_UNIT_REWARDED     = "ca-app-pub-6425054459696619/1377906329"
 
-// ─── Uncomment for development/testing to avoid policy violations ─────────────
-// private const val AD_UNIT_APP_OPEN     = "ca-app-pub-3940256099942544/9257395921"
-// private const val AD_UNIT_INTERSTITIAL = "ca-app-pub-3940256099942544/1033173712"
-// private const val AD_UNIT_REWARDED     = "ca-app-pub-3940256099942544/5224354917"
+// NOTE: Test ad unit IDs removed from source. Production IDs below are used.
 
 object AdManager {
     const val DEBUG_SUPPRESS_ADS = false // Set to false for production
@@ -50,11 +48,11 @@ object AdManager {
     // Application context
     private var appCtx: Context? = null
 
-    // Ad unit IDs (use test IDs in debug builds)
-    private val AD_UNIT_APP_OPEN: String = if (BuildConfig.DEBUG) "ca-app-pub-3940256099942544/3419835294" else "ca-app-pub-6425054459696619/3748084648"
-    private val AD_UNIT_INTERSTITIAL: String = if (BuildConfig.DEBUG) "ca-app-pub-3940256099942544/1033173712" else "ca-app-pub-6425054459696619/8013363790"
-    private val AD_UNIT_REWARDED: String = if (BuildConfig.DEBUG) "ca-app-pub-3940256099942544/5224354917" else "ca-app-pub-6425054459696619/1377906329"
-    private val AD_UNIT_BANNER: String = if (BuildConfig.DEBUG) "ca-app-pub-3940256099942544/6300978111" else "ca-app-pub-6425054459696619/9326445462"
+    // Ad unit IDs (production)
+    private val AD_UNIT_APP_OPEN: String = "ca-app-pub-6425054459696619/3748084648"
+    private val AD_UNIT_INTERSTITIAL: String = "ca-app-pub-6425054459696619/8013363790"
+    private val AD_UNIT_REWARDED: String = "ca-app-pub-6425054459696619/1377906329"
+    private val AD_UNIT_BANNER: String = "ca-app-pub-6425054459696619/9326445462"
 
     // Consent / personalization flags
     private var isPersonalizedAdsAllowed: Boolean = true
@@ -89,14 +87,28 @@ object AdManager {
     @Volatile
     private var interstitialEventCount = 0
     private const val INTERSTITIAL_AD_EVERY = 3 // show interstitial every N events
+    private const val PREFS_NAME = "ad_manager_prefs"
+    private const val KEY_INTERSTITIAL_COUNT = "interstitial_event_count"
+    private var prefs: SharedPreferences? = null
 
     // Preserve selection-cycle semantics (only fire once while user has >=3 selected)
     private var selectionAdFiredThisCycle = false
+
+    // Critical-flow suppression (e.g., uninstall flow, permission dialogs)
+    @Volatile
+    private var suppressInterstitials = false
 
     // Initialize and preload
     fun initialize(activity: Activity) {
         appCtx = activity.applicationContext
         bindActivity(activity)
+        prefs = activity.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        // Load persisted interstitial counter
+        try {
+            interstitialEventCount = prefs?.getInt(KEY_INTERSTITIAL_COUNT, 0) ?: 0
+        } catch (e: Exception) {
+            interstitialEventCount = 0
+        }
         MobileAds.initialize(activity.applicationContext) {
             Log.d(TAG, "MobileAds initialized")
             // Request consent first (if UMP available), then load ads
@@ -156,6 +168,7 @@ object AdManager {
     // --- Helpers: cooldown enforcement
     private fun canShowFullScreen(): Boolean {
         if (DEBUG_SUPPRESS_ADS) return false
+        if (suppressInterstitials) return false
         val now = System.currentTimeMillis()
         if (isAdShowing) return false
         if (now - lastFullScreenShownAt < MIN_FULL_SCREEN_INTERVAL_MS) return false
@@ -170,6 +183,14 @@ object AdManager {
         val now = System.currentTimeMillis()
         lastFullScreenShownAt = now
         fullScreenTimestamps.add(now)
+    }
+
+    private fun persistInterstitialCount() {
+        try {
+            prefs?.edit()?.putInt(KEY_INTERSTITIAL_COUNT, interstitialEventCount)?.apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to persist interstitial count: ${e.message}")
+        }
     }
 
     // --- AdRequest builder honoring consent
@@ -256,12 +277,12 @@ object AdManager {
         )
     }
 
-    fun showInterstitial(onDismiss: () -> Unit = {}, forceAlways: Boolean = false) {
+    fun showInterstitial(onDismiss: () -> Unit = {}) {
         if (DEBUG_SUPPRESS_ADS) { onDismiss(); return }
         val activity = currentActivity() ?: run { onDismiss(); return }
 
-        if (!forceAlways && !canShowFullScreen()) {
-            // If forced (premium flow), allow bypassing cooldown
+        // All interstitials must respect global cooldowns/caps
+        if (!canShowFullScreen()) {
             onDismiss()
             return
         }
@@ -376,9 +397,15 @@ object AdManager {
     fun destroyBanner(adView: AdView?) { adView?.destroy() }
 
     // --- Contextual trigger wrappers (preserve existing call sites)
-    private fun recordInterstitialEventAndMaybeShow() {
+    /**
+     * Record an interstitial-triggering event. By default this will show an interstitial every
+     * INTERSTITIAL_AD_EVERY events, but callers may set allowShow=false to increment the counter
+     * without attempting to show (useful for critical flows like uninstall/permission dialogs).
+     */
+    private fun recordInterstitialEventAndMaybeShow(onDismiss: () -> Unit = {}, allowShow: Boolean = true) {
         interstitialEventCount++
-        if (interstitialEventCount % INTERSTITIAL_AD_EVERY == 0) showInterstitial()
+        persistInterstitialCount()
+        if (allowShow && interstitialEventCount % INTERSTITIAL_AD_EVERY == 0) showInterstitial(onDismiss)
     }
 
     fun onHomeRefreshTapped() {
@@ -413,4 +440,35 @@ object AdManager {
     fun onNavigatedToHome() {
         recordInterstitialEventAndMaybeShow()
     }
+
+    // --- Semantic wrappers for direct callsites (preserve unified counting + allow onDismiss)
+    fun onExtractTapped(onDismiss: () -> Unit = {}) {
+        recordInterstitialEventAndMaybeShow(onDismiss)
+    }
+
+    fun onNavigateToHistory(onDismiss: () -> Unit = {}) {
+        recordInterstitialEventAndMaybeShow(onDismiss)
+    }
+
+    fun onCleanFinishedDone(onDismiss: () -> Unit = {}) {
+        recordInterstitialEventAndMaybeShow(onDismiss)
+    }
+
+    fun onCleanFinishedCancel(onDismiss: () -> Unit = {}) {
+        // Consider not showing on cancel; keep unified behavior but allow suppression here if desired
+        recordInterstitialEventAndMaybeShow(onDismiss)
+    }
+
+    fun onUninstallConfirmed(onDismiss: () -> Unit = {}) {
+        // Uninstall is a critical system flow — increment counter but do not show an interstitial now.
+        recordInterstitialEventAndMaybeShow(onDismiss, allowShow = false)
+    }
+
+    /**
+     * API for UI flows that want to suppress showing interstitials temporarily (e.g., while
+     * permission dialogs or uninstall confirmations are visible). Call `beginCriticalFlow()`
+     * before showing the critical dialog and `endCriticalFlow()` after it is dismissed.
+     */
+    fun beginCriticalFlow() { suppressInterstitials = true }
+    fun endCriticalFlow() { suppressInterstitials = false }
 }

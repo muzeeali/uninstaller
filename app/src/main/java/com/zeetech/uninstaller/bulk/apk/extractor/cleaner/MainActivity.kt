@@ -115,7 +115,7 @@ class MainActivity : ComponentActivity() {
                 if (isGone) {
                     pendingHistoryApp?.let { app -> viewModel.addToHistory(app) }
                     // Show interstitial after confirmed single uninstall
-                    AdManager.showInterstitial(forceAlways = true, onDismiss = {
+                    AdManager.onUninstallConfirmed(onDismiss = {
                         // Trigger 2: After Successful Uninstall
                         showActionRatingPrompt()
                     })
@@ -1218,7 +1218,7 @@ fun UninstallerApp(
                     }} else null,
                     onSettingsNav = if (currentScreen == "history") {{ currentScreen = "settings" }} else null,
                     onHistory = if (currentScreen != "history") {{
-                        AdManager.showInterstitial(forceAlways = true)
+                        AdManager.onNavigateToHistory()
                         currentScreen = "history"
                     }} else null
                 )
@@ -1240,7 +1240,7 @@ fun UninstallerApp(
                     val activity = context.findActivity() as? MainActivity
                     // Ad fires when the user intentionally taps DONE, not automatically
                     CleanFinishedScreen {
-                        AdManager.showInterstitial(forceAlways = true, onDismiss = {
+                        AdManager.onCleanFinishedDone(onDismiss = {
                             activity?.showActionRatingPrompt()
                             viewModel.backToHome()
                         })
@@ -1281,7 +1281,7 @@ fun UninstallerApp(
                             },
                             onExtract = { 
                                 // Premium Feature: Bypass cooldown
-                                AdManager.showInterstitial(forceAlways = true, onDismiss = {
+                                AdManager.onExtractTapped(onDismiss = {
                                     viewModel.extractApk(it, haptics)
                                     activity?.showActionRatingPrompt()
                                 })
@@ -2395,7 +2395,7 @@ fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, on
                 Spacer(modifier = Modifier.height(36.dp))
                 Button(
                     onClick = {
-                        AdManager.showInterstitial(onDismiss = { onCancel() })
+                        AdManager.onCleanFinishedCancel(onDismiss = { onCancel() })
                     },
                     modifier = Modifier.fillMaxWidth().height(60.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = LogoPurple),
