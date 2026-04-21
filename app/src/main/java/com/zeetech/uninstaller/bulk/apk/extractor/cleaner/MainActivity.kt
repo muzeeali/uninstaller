@@ -1238,11 +1238,11 @@ fun UninstallerApp(
                 )
                 is AppUiState.CleanFinished -> {
                     val activity = context.findActivity() as? MainActivity
-                    // Ad fires when the user intentionally taps DONE, not automatically
+                    // Navigate home immediately, then show the ad after the DONE tap.
                     CleanFinishedScreen {
-                        AdManager.onCleanFinishedDone(onDismiss = {
+                        viewModel.backToHome()
+                        AdManager.showInterstitial(onDismiss = {
                             activity?.showActionRatingPrompt()
-                            viewModel.backToHome()
                         })
                     }
                 }
