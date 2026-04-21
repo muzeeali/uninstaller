@@ -33,6 +33,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -2461,29 +2462,23 @@ fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, on
 @Composable
 fun BannerAdView() {
     val context = LocalContext.current
-    var isAdLoaded by remember { mutableStateOf(false) }
+    val isDarkTheme = isSystemInDarkTheme()
+    val backgroundColor = if (isDarkTheme) Color.Black else Color.White
+    val contentColor = if (isDarkTheme) Color.White else Color.Black
     // Use centralized AdManager to create and manage banners
-    val adView = remember {
-        AdManager.createAdaptiveBanner(
-            context,
-            onLoaded = { isAdLoaded = true },
-            onFailed = { isAdLoaded = false }
-        )
-    }
+    val adView = remember { AdManager.createAdaptiveBanner(context) }
 
     DisposableEffect(adView) {
         onDispose { AdManager.destroyBanner(adView) }
     }
-
-    if (!isAdLoaded) return
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .wrapContentHeight()
             .navigationBarsPadding(),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
-        shape = RoundedCornerShape(0.dp),
+        color = backgroundColor,
+        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
         tonalElevation = 2.dp,
         shadowElevation = 0.dp
     ) {
@@ -2497,7 +2492,7 @@ fun BannerAdView() {
             Text(
                 text = "Advertisement",
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = contentColor,
                 modifier = Modifier.padding(bottom = 4.dp)
             )
 
