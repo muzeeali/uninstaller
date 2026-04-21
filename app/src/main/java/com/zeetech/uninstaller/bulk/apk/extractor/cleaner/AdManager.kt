@@ -32,57 +32,55 @@ private const val AD_UNIT_REWARDED     = "ca-app-pub-6425054459696619/1377906329
 object AdManager {
     const val DEBUG_SUPPRESS_ADS = false // Set to false for production
 
-    // ─── Weak reference to Activity (avoids memory leaks) ────────────────────
+    // Weak activity reference
     private var activityRef: WeakReference<Activity>? = null
-
-    fun bindActivity(activity: Activity) {
-        activityRef = WeakReference(activity)
-    }
-
     private fun currentActivity(): Activity? = activityRef?.get()
+    fun bindActivity(activity: Activity) { activityRef = WeakReference(activity) }
 
-    // ─── Session Counters ────────────────────────────────────────────────────
-    var rewardedUnlockActive = false   // lifted after watching rewarded ad
-
-
-    // ─── Session Ad Counters (reset on process death / cold start) ────────────
-    private var homeRefreshCount = 0                    // Trigger 1a: Home refresh, every 3rd
-    private var historyRefreshCount = 0                 // Trigger 1b: History refresh, every 3rd
-    private const val REFRESH_AD_EVERY = 3
-
-    private var tabSwitchCount = 0                      // Trigger 4
-    private const val TAB_SWITCH_AD_EVERY = 5
-
-    private var settingsEntryCount = 0                  // Trigger 5
-    private const val SETTINGS_AD_EVERY = 3
-
-    private var homeNavCount = 0                        // Trigger 6
-    private const val HOME_NAV_AD_EVERY = 5
-
-    private var selectAllCount = 0                      // Trigger 3: Select All, every 3rd
-    private const val SELECT_ALL_AD_EVERY = 3
-
-    private var selectionAdFiredThisCycle = false       // Trigger 2: rearms at count==0
-
-    // ─── Ad Objects ──────────────────────────────────────────────────────────
+    // Application context
     private var appCtx: Context? = null
-    private var appOpenAd: AppOpenAd? = null
-    private var appOpenAdLoading = false
 
-    private var interstitialAd: InterstitialAd? = null
-    private var interstitialLoading = false
-    
-    // ── Global Ad Sync Flag ──────────────────────────────────────────────────
+    // Ad unit IDs
+    private const val AD_UNIT_APP_OPEN     = "ca-app-pub-6425054459696619/3748084648"
+    private const val AD_UNIT_INTERSTITIAL = "ca-app-pub-6425054459696619/8013363790"
+    private const val AD_UNIT_REWARDED     = "ca-app-pub-6425054459696619/1377906329"
+    private const val AD_UNIT_BANNER       = "ca-app-pub-6425054459696619/9326445462"
+
+    // Single-active ad lock
     private var isAdShowing = false
 
+    // AppOpen
+    private var appOpenAd: AppOpenAd? = null
+    private var appOpenAdLoading = false
+    private var appOpenShownThisColdStart = false
+
+    // Interstitial
+    private var interstitialAd: InterstitialAd? = null
+    private var interstitialLoading = false
+
+    // Rewarded
     private var rewardedAd: RewardedAd? = null
     private var rewardedLoading = false
-    
     private val _isRewardedReadyFlow = MutableStateFlow(false)
     val isRewardedReadyFlow = _isRewardedReadyFlow.asStateFlow()
+    var rewardedUnlockActive = false
 
-    // ─── Initialization ──────────────────────────────────────────────────────
+    // --- Policy / UX safety: cooldowns and caps
+    private const val MIN_FULL_SCREEN_INTERVAL_MS = 90_000L // 90s minimum between full-screen ads
+    private const val WINDOW_MS = 10 * 60 * 1000L // 10 minutes
+    private const val MAX_INTERSTITIALS_PER_WINDOW = 3
+    private var lastFullScreenShownAt = 0L
+    private val fullScreenTimestamps: MutableList<Long> = mutableListOf()
 
+    // Single universal interstitial event counter (used by all contextual triggers)
+    @Volatile
+    private var interstitialEventCount = 0
+    private const val INTERSTITIAL_AD_EVERY = 3 // show interstitial every N events
+
+    // Preserve selection-cycle semantics (only fire once while user has >=3 selected)
+    private var selectionAdFiredThisCycle = false
+
+    // Initialize and preload
     fun initialize(activity: Activity) {
         appCtx = activity.applicationContext
         bindActivity(activity)
@@ -94,8 +92,26 @@ object AdManager {
         }
     }
 
-    // ─── App Open ────────────────────────────────────────────────────────────
+    // --- Helpers: cooldown enforcement
+    private fun canShowFullScreen(): Boolean {
+        if (DEBUG_SUPPRESS_ADS) return false
+        val now = System.currentTimeMillis()
+        if (isAdShowing) return false
+        if (now - lastFullScreenShownAt < MIN_FULL_SCREEN_INTERVAL_MS) return false
 
+        // Prune old timestamps
+        fullScreenTimestamps.removeIf { it < now - WINDOW_MS }
+        if (fullScreenTimestamps.size >= MAX_INTERSTITIALS_PER_WINDOW) return false
+        return true
+    }
+
+    private fun noteFullScreenShown() {
+        val now = System.currentTimeMillis()
+        lastFullScreenShownAt = now
+        fullScreenTimestamps.add(now)
+    }
+
+    // --- App Open
     private fun loadAppOpen() {
         val ctx = appCtx ?: return
         if (appOpenAd != null || appOpenAdLoading) return
@@ -118,22 +134,20 @@ object AdManager {
         )
     }
 
-
     fun showAppOpenAdIfAvailable(onDismiss: () -> Unit = {}) {
-        if (DEBUG_SUPPRESS_ADS) {
-            Log.d(TAG, "Ad skipped (DEBUG_SUPPRESS_ADS=true)")
-            onDismiss()
-            return
-        }
+        if (DEBUG_SUPPRESS_ADS) { onDismiss(); return }
+        if (appOpenShownThisColdStart) { onDismiss(); return }
+        if (!canShowFullScreen()) { onDismiss(); return }
         val activity = currentActivity() ?: run { onDismiss(); return }
         val ad = appOpenAd ?: run { onDismiss(); return }
-        if (isAdShowing) { onDismiss(); return }
 
         isAdShowing = true
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
             override fun onAdDismissedFullScreenContent() {
                 isAdShowing = false
                 appOpenAd = null
+                appOpenShownThisColdStart = true
+                noteFullScreenShown()
                 loadAppOpen()
                 onDismiss()
             }
@@ -147,8 +161,7 @@ object AdManager {
         ad.show(activity)
     }
 
-    // ─── Interstitial ────────────────────────────────────────────────────────
-
+    // --- Interstitial
     private fun loadInterstitial() {
         val ctx = appCtx ?: return
         if (interstitialAd != null || interstitialLoading) return
@@ -172,15 +185,14 @@ object AdManager {
     }
 
     fun showInterstitial(onDismiss: () -> Unit = {}, forceAlways: Boolean = false) {
-        // Note: The forceAlways parameter is no longer strictly required for bypassing
-        // time limits since the time-based cooldown was removed. However, it remains
-        // in the signature to explicitly denote premium gate triggers within the codebase.
-        if (DEBUG_SUPPRESS_ADS) {
-            Log.d(TAG, "Ad skipped (DEBUG_SUPPRESS_ADS=true)")
+        if (DEBUG_SUPPRESS_ADS) { onDismiss(); return }
+        val activity = currentActivity() ?: run { onDismiss(); return }
+
+        if (!forceAlways && !canShowFullScreen()) {
+            // If forced (premium flow), allow bypassing cooldown
             onDismiss()
             return
         }
-        val activity = currentActivity() ?: run { onDismiss(); return }
 
         val ad = interstitialAd
         if (ad == null || isAdShowing) {
@@ -188,11 +200,13 @@ object AdManager {
             onDismiss()
             return
         }
+
         isAdShowing = true
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
             override fun onAdDismissedFullScreenContent() {
                 isAdShowing = false
                 interstitialAd = null
+                noteFullScreenShown()
                 loadInterstitial()
                 onDismiss()
             }
@@ -206,70 +220,7 @@ object AdManager {
         ad.show(activity)
     }
 
-    // ─── Contextual interstitial triggers ────────────────────────────────────
-
-    // Trigger 1a — Home Refresh (1, 4, 7, 10...)
-    fun onHomeRefreshTapped() {
-        homeRefreshCount++
-        if (homeRefreshCount % REFRESH_AD_EVERY == 1) {
-            showInterstitial()
-        }
-    }
-
-    // Trigger 1b — History Refresh (1, 4, 7, 10... separate counter)
-    fun onHistoryRefreshTapped() {
-        historyRefreshCount++
-        if (historyRefreshCount % REFRESH_AD_EVERY == 1) {
-            showInterstitial()
-        }
-    }
-
-    // Trigger 2 — Selection count
-    fun onSelectionChanged(newCount: Int) {
-        if (newCount == 0) {
-            selectionAdFiredThisCycle = false   // rearm for next cycle
-        }
-        if (newCount >= 3 && !selectionAdFiredThisCycle) {
-            selectionAdFiredThisCycle = true
-            showInterstitial()
-        }
-    }
-
-    // Trigger 3 — Select All (1, 4, 7, 10... independent counter)
-    fun onSelectAll() {
-        selectAllCount++
-        if (selectAllCount % SELECT_ALL_AD_EVERY == 1) {
-            showInterstitial()
-        }
-        selectionAdFiredThisCycle = true
-    }
-
-    // Trigger 4 — Tab switch (1, 5, 10, 15...)
-    fun onTabSwitched() {
-        tabSwitchCount++
-        if (tabSwitchCount > 0 && tabSwitchCount % TAB_SWITCH_AD_EVERY == 0) {
-            showInterstitial()
-        }
-    }
-
-    // Trigger 5 — Enter Settings (1, 4, 7, 10...)
-    fun onEnteredSettings() {
-        settingsEntryCount++
-        if (settingsEntryCount % SETTINGS_AD_EVERY == 1) {
-            showInterstitial()
-        }
-    }
-
-    // Trigger 6 — Navigate to Home from ANYWHERE (1, 5, 10, 15...)
-    fun onNavigatedToHome() {
-        homeNavCount++
-        if (homeNavCount > 0 && homeNavCount % HOME_NAV_AD_EVERY == 0) {
-            showInterstitial()
-        }
-    }
-
-    // ─── Rewarded ────────────────────────────────────────────────────────────
-
+    // --- Rewarded
     private fun loadRewarded() {
         val ctx = appCtx ?: return
         if (rewardedAd != null || rewardedLoading) return
@@ -296,7 +247,6 @@ object AdManager {
 
     fun showRewarded(onRewardEarned: () -> Unit, onDismiss: () -> Unit = {}) {
         if (DEBUG_SUPPRESS_ADS) {
-            Log.d(TAG, "Ad skipped (DEBUG_SUPPRESS_ADS=true). Rewarding immediately.")
             rewardedUnlockActive = true
             onRewardEarned()
             return
@@ -316,9 +266,7 @@ object AdManager {
                 rewardedAd = null
                 _isRewardedReadyFlow.value = false
                 loadRewarded()
-                if (isRewardEarned) {
-                    onRewardEarned()
-                }
+                if (isRewardEarned) onRewardEarned()
                 onDismiss()
             }
             override fun onAdFailedToShowFullScreenContent(error: AdError) {
@@ -336,4 +284,61 @@ object AdManager {
     }
 
     fun isRewardedReady() = rewardedAd != null
+
+    // --- Banner helper (returns configured AdView)
+    fun createAdaptiveBanner(context: Context): AdView {
+        val adView = AdView(context).apply {
+            val displayMetrics = context.resources.displayMetrics
+            val adWidth = (displayMetrics.widthPixels / displayMetrics.density).toInt()
+            setAdSize(AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(context, adWidth))
+            adUnitId = AD_UNIT_BANNER
+            layoutParams = android.view.ViewGroup.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        adView.loadAd(AdRequest.Builder().build())
+        return adView
+    }
+
+    fun destroyBanner(adView: AdView?) { adView?.destroy() }
+
+    // --- Contextual trigger wrappers (preserve existing call sites)
+    private fun recordInterstitialEventAndMaybeShow() {
+        interstitialEventCount++
+        if (interstitialEventCount % INTERSTITIAL_AD_EVERY == 0) showInterstitial()
+    }
+
+    fun onHomeRefreshTapped() {
+        recordInterstitialEventAndMaybeShow()
+    }
+
+    fun onHistoryRefreshTapped() {
+        recordInterstitialEventAndMaybeShow()
+    }
+
+    fun onSelectionChanged(newCount: Int) {
+        if (newCount == 0) selectionAdFiredThisCycle = false
+        if (newCount >= 3 && !selectionAdFiredThisCycle) {
+            selectionAdFiredThisCycle = true
+            recordInterstitialEventAndMaybeShow()
+        }
+    }
+
+    fun onSelectAll() {
+        selectionAdFiredThisCycle = true
+        recordInterstitialEventAndMaybeShow()
+    }
+
+    fun onTabSwitched() {
+        recordInterstitialEventAndMaybeShow()
+    }
+
+    fun onEnteredSettings() {
+        recordInterstitialEventAndMaybeShow()
+    }
+
+    fun onNavigatedToHome() {
+        recordInterstitialEventAndMaybeShow()
+    }
 }

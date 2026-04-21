@@ -2454,23 +2454,13 @@ fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, on
 @Composable
 fun BannerAdView() {
     val context = LocalContext.current
-    val adView = remember {
-        AdView(context).apply {
-            val displayMetrics = context.resources.displayMetrics
-            val adWidth = (displayMetrics.widthPixels / displayMetrics.density).toInt()
-            setAdSize(AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(context, adWidth))
-            adUnitId = "ca-app-pub-6425054459696619/9326445462"
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            loadAd(AdRequest.Builder().build())
-        }
+    // Use centralized AdManager to create and manage banners
+    val adView = remember { AdManager.createAdaptiveBanner(context) }
+
+    DisposableEffect(adView) {
+        onDispose { AdManager.destroyBanner(adView) }
     }
 
-    DisposableEffect(Unit) {
-        onDispose { adView.destroy() }
-    }
     AndroidView(
         modifier = Modifier.fillMaxWidth(),
         factory = { adView }
