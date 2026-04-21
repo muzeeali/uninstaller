@@ -1389,7 +1389,9 @@ fun UninstallerTopBar(
 ) {
     // Compact custom top bar: left icons left-aligned, title centered, right icons right-aligned
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .statusBarsPadding(),
         color = Color.Transparent,
         shadowElevation = 0.dp
     ) {
