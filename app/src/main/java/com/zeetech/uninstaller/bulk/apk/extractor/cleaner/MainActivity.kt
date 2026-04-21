@@ -2464,6 +2464,7 @@ fun BannerAdView() {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
+            .wrapContentHeight()
             .padding(horizontal = 12.dp, vertical = 8.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
         shape = RoundedCornerShape(16.dp),
@@ -2473,6 +2474,7 @@ fun BannerAdView() {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .wrapContentHeight()
                 .padding(vertical = 8.dp, horizontal = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -2480,11 +2482,13 @@ fun BannerAdView() {
                 text = "Advertisement",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 8.dp)
+                modifier = Modifier
             )
 
             AndroidView(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .wrapContentHeight(),
                 factory = { _ -> adView }
             )
         }
