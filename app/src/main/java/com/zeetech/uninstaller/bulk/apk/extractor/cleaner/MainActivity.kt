@@ -2462,8 +2462,7 @@ fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, on
 @Composable
 fun BannerAdView() {
     val context = LocalContext.current
-    // Use MaterialTheme colorScheme so banner follows the app's theme toggle
-    val backgroundColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+    // Use MaterialTheme colorScheme so banner label follows the app's theme toggle
     val contentColor = MaterialTheme.colorScheme.onSurfaceVariant
     // Use centralized AdManager to create and manage banners
     val adView = remember { AdManager.createAdaptiveBanner(context) }
@@ -2472,38 +2471,30 @@ fun BannerAdView() {
         onDispose { AdManager.destroyBanner(adView) }
     }
 
-    Surface(
+    // Render ad view directly without a Surface background so the native AdView
+    // isn't double-wrapped by a Compose background. This lets the ad creative
+    // appear as provided by the SDK while keeping a small label above it.
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .wrapContentHeight()
-            .navigationBarsPadding(),
-        color = backgroundColor,
-        // Use no corner rounding for the banner container
-        shape = RoundedCornerShape(0.dp),
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp
+            .navigationBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Column(
+        Text(
+            text = "Advertisement",
+            style = MaterialTheme.typography.labelSmall,
+            color = contentColor,
+            modifier = Modifier.padding(bottom = 4.dp)
+        )
+
+        AndroidView(
             modifier = Modifier
                 .fillMaxWidth()
-                .wrapContentHeight()
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = "Advertisement",
-                style = MaterialTheme.typography.labelSmall,
-                color = contentColor,
-                modifier = Modifier.padding(bottom = 4.dp)
-            )
-
-            AndroidView(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .wrapContentHeight(),
-                factory = { _ -> adView }
-            )
-        }
+                .wrapContentHeight(),
+            factory = { _ -> adView }
+        )
     }
 }
 
