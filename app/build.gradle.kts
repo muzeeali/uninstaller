@@ -69,8 +69,10 @@ dependencies {
     implementation(libs.firebase.messaging)
     implementation(libs.firebase.config)
 
-    // AdMob
-    implementation("com.google.android.gms:play-services-ads:23.6.0")
+    // AdMob (updated to latest stable)
+    implementation("com.google.android.gms:play-services-ads:25.2.0")
+    // User Messaging Platform for consent (UMP)
+    implementation("com.google.android.ump:user-messaging-platform:4.0.0")
     // App Updates & Reviews
     implementation(libs.play.app.update)
     implementation(libs.play.review)
