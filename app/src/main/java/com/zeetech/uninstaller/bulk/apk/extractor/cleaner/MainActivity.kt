@@ -2461,18 +2461,33 @@ fun BannerAdView() {
         onDispose { AdManager.destroyBanner(adView) }
     }
 
-    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-            text = "Advertisement",
-            style = MaterialTheme.typography.labelSmall,
-            color = Color.Gray,
-            modifier = Modifier.padding(vertical = 4.dp)
-        )
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
+        shape = RoundedCornerShape(16.dp),
+        tonalElevation = 2.dp,
+        shadowElevation = 0.dp
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp, horizontal = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "Advertisement",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
 
-        AndroidView(
-            modifier = Modifier.fillMaxWidth(),
-            factory = { _ -> adView }
-        )
+            AndroidView(
+                modifier = Modifier.fillMaxWidth(),
+                factory = { _ -> adView }
+            )
+        }
     }
 }
 
