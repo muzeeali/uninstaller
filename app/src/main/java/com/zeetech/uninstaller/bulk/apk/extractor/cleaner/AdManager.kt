@@ -423,7 +423,8 @@ object AdManager {
     }
 
     fun onCleanFinishedDone(onDismiss: () -> Unit = {}) {
-        recordInterstitialEventAndMaybeShow(onDismiss)
+        // Clean finished is a natural transition; show an interstitial immediately if available.
+        showInterstitial(onDismiss)
     }
 
     fun onCleanFinishedCancel(onDismiss: () -> Unit = {}) {
