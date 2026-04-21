@@ -1,6 +1,6 @@
 package com.zeetech.uninstaller.bulk.apk.extractor.cleaner
 
-import android.util.Log
+// Logs routed through Logger; android.util.Log imports removed to avoid accidental debug logging
 
 import android.app.AppOpsManager
 import android.app.Activity
@@ -132,7 +132,7 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
         if (result.resultCode != RESULT_OK) {
-            Log.e("MainActivity", "Update flow failed! Result code: ${result.resultCode}")
+            Logger.e("MainActivity", "Update flow failed! Result code: ${result.resultCode}")
         }
     }
 
@@ -166,16 +166,15 @@ class MainActivity : ComponentActivity() {
 
         // App Open Ad & Rating - Foreground Resumption Logic
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
-            private var isFirstStart = true
             override fun onStart(owner: LifecycleOwner) {
                 // Auto-refresh lists and detect uninstalled apps on resume
                 viewModel.refreshHistory()
                 // Wait for the ad to be dismissed or failed before showing the rating prompt
                 AdManager.showAppOpenAdIfAvailable {
-                    if (!isFirstStart) {
+                    if (!AdManager.appLifecycleFirstStart) {
                         showForegroundRatingPrompt()
                     }
-                    isFirstStart = false
+                    AdManager.appLifecycleFirstStart = false
                 }
             }
         })
@@ -196,7 +195,8 @@ class MainActivity : ComponentActivity() {
             WorkManager.initialize(
                 this,
                 Configuration.Builder()
-                    .setMinimumLoggingLevel(android.util.Log.INFO)
+                    // Reduce logging to errors only to avoid debug noise
+                    .setMinimumLoggingLevel(android.util.Log.ERROR)
                     .build()
             )
         } catch (e: Exception) {

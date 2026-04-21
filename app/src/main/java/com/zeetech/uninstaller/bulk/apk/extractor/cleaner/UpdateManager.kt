@@ -6,7 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
-import android.util.Log
+// Logging via Logger wrapper to avoid debug output in production
 import com.google.android.play.core.appupdate.AppUpdateManagerFactory
 import com.google.android.play.core.appupdate.AppUpdateOptions
 import com.google.android.play.core.install.InstallStateUpdatedListener
@@ -54,11 +54,11 @@ class UpdateManager(private val context: Context) {
         remoteConfig.fetchAndActivate().addOnCompleteListener { task ->
             val isMandatory = if (task.isSuccessful) remoteConfig.getBoolean("is_update_mandatory") else false
             
-            if (isGooglePlaySource()) {
-                Log.d(TAG, "Source: Google Play. Flow: ${if (isMandatory) "IMMEDIATE" else "FLEXIBLE"}")
+                if (isGooglePlaySource()) {
+                Logger.d(TAG, "Source: Google Play. Flow: ${if (isMandatory) "IMMEDIATE" else "FLEXIBLE"}")
                 checkPlayStoreUpdate(updateLauncher, isMandatory, onFlexibleUpdateDownloaded)
             } else {
-                Log.d(TAG, "Source: Other/APK. Checking Firebase...")
+                Logger.d(TAG, "Source: Other/APK. Checking Firebase...")
                 // In APK path, if test_update is true, we force it for UI verification
                 val isTestUpdate = if (task.isSuccessful) remoteConfig.getBoolean("is_test_update") else false
                 checkFirebaseUpdate(isMandatory, isTestUpdate, onManualUpdateAvailable)
@@ -171,7 +171,7 @@ class UpdateManager(private val context: Context) {
             }
             activity.startActivity(intent)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to launch update URL: $url")
+            Logger.e(TAG, "Failed to launch update URL: $url")
         }
     }
 }

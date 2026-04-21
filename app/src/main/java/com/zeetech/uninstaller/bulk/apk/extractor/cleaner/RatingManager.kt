@@ -5,7 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
-import android.util.Log
+// Logging via Logger wrapper to avoid debug output in production
 import com.google.android.play.core.review.ReviewManager
 import com.google.android.play.core.review.ReviewManagerFactory
 
@@ -29,9 +29,9 @@ class RatingManager(private val context: Context) {
         if (current == 0L) {
             val now = System.currentTimeMillis()
             prefs.edit().putLong(KEY_FIRST_LAUNCH, now).apply()
-            Log.d(TAG, "initializeFirstLaunch: Set to $now")
+            Logger.d(TAG, "initializeFirstLaunch: Set to $now")
         } else {
-            Log.d(TAG, "initializeFirstLaunch: Already set to $current")
+            Logger.d(TAG, "initializeFirstLaunch: Already set to $current")
         }
     }
 
@@ -101,12 +101,12 @@ class RatingManager(private val context: Context) {
         markAsRated() // Once they click 'Rate Now', we stop asking forever locally.
         
         if (forceStore) {
-            Log.d(TAG, "Manual request - Directing straight to Store.")
+            Logger.d(TAG, "Manual request - Directing straight to Store.")
             redirectToStore(activity)
             return
         }
 
-        Log.d(TAG, "Attempting Native In-App Review Flow...")
+            Logger.d(TAG, "Attempting Native In-App Review Flow...")
         val request = manager.requestReviewFlow()
         request.addOnCompleteListener { task ->
             if (task.isSuccessful) {
@@ -115,11 +115,11 @@ class RatingManager(private val context: Context) {
                 val flow = manager.launchReviewFlow(activity, reviewInfo)
                 flow.addOnCompleteListener { _ ->
                     // Flow finished (either rated or dismissed). No action needed.
-                    Log.d(TAG, "Native In-App Review Flow completed.")
+                    Logger.d(TAG, "Native In-App Review Flow completed.")
                 }
             } else {
                 // Native flow failed (e.g. quota reached), fallback to store redirection.
-                Log.d(TAG, "Native flow unavailable. Falling back to Store redirection.")
+                Logger.d(TAG, "Native flow unavailable. Falling back to Store redirection.")
                 redirectToStore(activity)
             }
         }
