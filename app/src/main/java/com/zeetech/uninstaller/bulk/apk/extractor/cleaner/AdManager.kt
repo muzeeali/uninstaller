@@ -20,7 +20,6 @@ import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback
 import com.google.android.gms.ads.rewarded.RewardedAd
 import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback
 import kotlinx.coroutines.flow.MutableStateFlow
-import android.content.SharedPreferences
 import kotlinx.coroutines.flow.asStateFlow
 import com.google.android.ump.ConsentDebugSettings
 import com.google.android.ump.ConsentForm
@@ -64,6 +63,7 @@ object AdManager {
     private var appOpenAd: AppOpenAd? = null
     private var appOpenAdLoading = false
     private var appOpenShownThisColdStart = false
+    private var pendingShowAppOpenOnLoad = false
 
     // Interstitial
     private var interstitialAd: InterstitialAd? = null
@@ -76,39 +76,25 @@ object AdManager {
     val isRewardedReadyFlow = _isRewardedReadyFlow.asStateFlow()
     var rewardedUnlockActive = false
 
-    // --- Policy / UX safety: cooldowns and caps
-    private const val MIN_FULL_SCREEN_INTERVAL_MS = 90_000L // 90s minimum between full-screen ads
-    private const val WINDOW_MS = 10 * 60 * 1000L // 10 minutes
-    private const val MAX_INTERSTITIALS_PER_WINDOW = 3
-    private var lastFullScreenShownAt = 0L
-    private val fullScreenTimestamps: MutableList<Long> = mutableListOf()
+    // Note: Interstitial frequency is controlled by event-based throttle (INTERSTITIAL_AD_EVERY).
 
     // Single universal interstitial event counter (used by all contextual triggers)
     @Volatile
     private var interstitialEventCount = 0
     private const val INTERSTITIAL_AD_EVERY = 3 // show interstitial every N events
-    private const val PREFS_NAME = "ad_manager_prefs"
-    private const val KEY_INTERSTITIAL_COUNT = "interstitial_event_count"
-    private var prefs: SharedPreferences? = null
+    // No persistence — counter is in-memory only
 
     // Preserve selection-cycle semantics (only fire once while user has >=3 selected)
     private var selectionAdFiredThisCycle = false
 
-    // Critical-flow suppression (e.g., uninstall flow, permission dialogs)
-    @Volatile
-    private var suppressInterstitials = false
+    // No critical-flow suppression — event-based throttle controls shows
 
     // Initialize and preload
     fun initialize(activity: Activity) {
         appCtx = activity.applicationContext
         bindActivity(activity)
-        prefs = activity.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        // Load persisted interstitial counter
-        try {
-            interstitialEventCount = prefs?.getInt(KEY_INTERSTITIAL_COUNT, 0) ?: 0
-        } catch (e: Exception) {
-            interstitialEventCount = 0
-        }
+        // Mark that we want to show an App Open on this cold start when it's available
+        pendingShowAppOpenOnLoad = true
         MobileAds.initialize(activity.applicationContext) {
             Log.d(TAG, "MobileAds initialized")
             // Request consent first (if UMP available), then load ads
@@ -168,30 +154,10 @@ object AdManager {
     // --- Helpers: cooldown enforcement
     private fun canShowFullScreen(): Boolean {
         if (DEBUG_SUPPRESS_ADS) return false
-        if (suppressInterstitials) return false
-        val now = System.currentTimeMillis()
         if (isAdShowing) return false
-        if (now - lastFullScreenShownAt < MIN_FULL_SCREEN_INTERVAL_MS) return false
-
-        // Prune old timestamps
-        fullScreenTimestamps.removeIf { it < now - WINDOW_MS }
-        if (fullScreenTimestamps.size >= MAX_INTERSTITIALS_PER_WINDOW) return false
         return true
     }
-
-    private fun noteFullScreenShown() {
-        val now = System.currentTimeMillis()
-        lastFullScreenShownAt = now
-        fullScreenTimestamps.add(now)
-    }
-
-    private fun persistInterstitialCount() {
-        try {
-            prefs?.edit()?.putInt(KEY_INTERSTITIAL_COUNT, interstitialEventCount)?.apply()
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to persist interstitial count: ${e.message}")
-        }
-    }
+    
 
     // --- AdRequest builder honoring consent
     private fun buildAdRequest(): AdRequest {
@@ -218,6 +184,16 @@ object AdManager {
                     appOpenAd = ad
                     appOpenAdLoading = false
                     Log.d(TAG, "App open ad loaded")
+                    if (pendingShowAppOpenOnLoad && !appOpenShownThisColdStart) {
+                        pendingShowAppOpenOnLoad = false
+                        // show when available
+                        // run on UI thread via current activity if possible
+                        currentActivity()?.runOnUiThread {
+                            try {
+                                showAppOpenAdIfAvailable()
+                            } catch (_: Exception) {}
+                        }
+                    }
                 }
                 override fun onAdFailedToLoad(error: LoadAdError) {
                     appOpenAdLoading = false
@@ -240,7 +216,6 @@ object AdManager {
                 isAdShowing = false
                 appOpenAd = null
                 appOpenShownThisColdStart = true
-                noteFullScreenShown()
                 loadAppOpen()
                 onDismiss()
             }
@@ -299,7 +274,6 @@ object AdManager {
             override fun onAdDismissedFullScreenContent() {
                 isAdShowing = false
                 interstitialAd = null
-                noteFullScreenShown()
                 loadInterstitial()
                 onDismiss()
             }
@@ -398,14 +372,12 @@ object AdManager {
 
     // --- Contextual trigger wrappers (preserve existing call sites)
     /**
-     * Record an interstitial-triggering event. By default this will show an interstitial every
-     * INTERSTITIAL_AD_EVERY events, but callers may set allowShow=false to increment the counter
-     * without attempting to show (useful for critical flows like uninstall/permission dialogs).
+     * Record an interstitial-triggering event. This will show an interstitial every
+     * INTERSTITIAL_AD_EVERY events.
      */
-    private fun recordInterstitialEventAndMaybeShow(onDismiss: () -> Unit = {}, allowShow: Boolean = true) {
+    private fun recordInterstitialEventAndMaybeShow(onDismiss: () -> Unit = {}) {
         interstitialEventCount++
-        persistInterstitialCount()
-        if (allowShow && interstitialEventCount % INTERSTITIAL_AD_EVERY == 0) showInterstitial(onDismiss)
+        if (interstitialEventCount % INTERSTITIAL_AD_EVERY == 0) showInterstitial(onDismiss)
     }
 
     fun onHomeRefreshTapped() {
@@ -460,15 +432,7 @@ object AdManager {
     }
 
     fun onUninstallConfirmed(onDismiss: () -> Unit = {}) {
-        // Uninstall is a critical system flow — increment counter but do not show an interstitial now.
-        recordInterstitialEventAndMaybeShow(onDismiss, allowShow = false)
+        recordInterstitialEventAndMaybeShow(onDismiss)
     }
-
-    /**
-     * API for UI flows that want to suppress showing interstitials temporarily (e.g., while
-     * permission dialogs or uninstall confirmations are visible). Call `beginCriticalFlow()`
-     * before showing the critical dialog and `endCriticalFlow()` after it is dismissed.
-     */
-    fun beginCriticalFlow() { suppressInterstitials = true }
-    fun endCriticalFlow() { suppressInterstitials = false }
+}
 }

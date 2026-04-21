@@ -2461,10 +2461,19 @@ fun BannerAdView() {
         onDispose { AdManager.destroyBanner(adView) }
     }
 
-    AndroidView(
-        modifier = Modifier.fillMaxWidth(),
-        factory = { _ -> adView }
-    )
+    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = "Advertisement",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.Gray,
+            modifier = Modifier.padding(vertical = 4.dp)
+        )
+
+        AndroidView(
+            modifier = Modifier.fillMaxWidth(),
+            factory = { _ -> adView }
+        )
+    }
 }
 
 @Composable
