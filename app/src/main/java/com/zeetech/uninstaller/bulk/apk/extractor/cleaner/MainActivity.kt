@@ -1387,91 +1387,89 @@ fun UninstallerTopBar(
     onSettingsNav: (() -> Unit)? = null,
     onHistory: (() -> Unit)? = null
 ) {
-    CenterAlignedTopAppBar(
-        navigationIcon = {
-            Row {
+    // Compact custom top bar: left icons left-aligned, title centered, right icons right-aligned
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = Color.Transparent,
+        shadowElevation = 0.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Left group (compact)
+            Row(
+                modifier = Modifier.wrapContentWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 if (onRefresh != null) {
-                    IconButton(onClick = onRefresh) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = stringResource(R.string.content_refresh),
-                            tint = EmeraldGreen
-                        )
+                    IconButton(onClick = onRefresh, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.content_refresh), tint = EmeraldGreen, modifier = Modifier.size(18.dp))
                     }
                 }
                 if (onShareApp != null) {
-                    IconButton(onClick = onShareApp) {
-                        Icon(
-                            imageVector = Icons.Default.Share,
-                            contentDescription = stringResource(R.string.item_share),
-                            tint = EmeraldGreen
-                        )
+                    IconButton(onClick = onShareApp, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.Default.Share, contentDescription = stringResource(R.string.item_share), tint = EmeraldGreen, modifier = Modifier.size(18.dp))
                     }
                 }
                 if (onSettingsNav != null) {
-                    IconButton(onClick = onSettingsNav) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Settings",
-                            tint = EmeraldGreen
-                        )
+                    IconButton(onClick = onSettingsNav, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings", tint = EmeraldGreen, modifier = Modifier.size(18.dp))
                     }
                 }
                 if (onHistory != null) {
-                    IconButton(onClick = onHistory) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_history),
-                            contentDescription = "History",
-                            tint = EmeraldGreen
-                        )
+                    IconButton(onClick = onHistory, modifier = Modifier.size(40.dp)) {
+                        Icon(painter = painterResource(id = R.drawable.ic_history), contentDescription = "History", tint = EmeraldGreen, modifier = Modifier.size(18.dp))
                     }
                 }
             }
-        },
-        title = {
-            when (title) {
-                "UNINSTALLER" -> {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("ZEE ", fontSize = 18.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.5.sp)
-                        Text("UNINSTALLER", fontSize = 18.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.5.sp)
+
+            // Center title
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                when (title) {
+                    "UNINSTALLER" -> {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("ZEE ", fontSize = 16.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.5.sp)
+                            Text("UNINSTALLER", fontSize = 16.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.5.sp)
+                        }
+                    }
+                    "SETTINGS" -> {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("ZEE ", fontSize = 16.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.5.sp)
+                            Text("SETTINGS", fontSize = 16.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.5.sp)
+                        }
+                    }
+                    "HISTORY" -> {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("ZEE ", fontSize = 16.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.5.sp)
+                            Text("HISTORY", fontSize = 16.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.5.sp)
+                        }
+                    }
+                    else -> {
+                        Text(text = title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LogoPurple, letterSpacing = 1.sp)
                     }
                 }
-                "SETTINGS" -> {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("ZEE ", fontSize = 18.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.5.sp)
-                        Text("SETTINGS", fontSize = 18.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.5.sp)
-                    }
+            }
+
+            // Right group (compact)
+            Row(
+                modifier = Modifier.wrapContentWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                IconButton(onClick = onThemeToggle, modifier = Modifier.size(40.dp)) {
+                    Icon(painter = painterResource(id = if (isDarkTheme) R.drawable.ic_light_mode else R.drawable.ic_dark_mode), contentDescription = stringResource(R.string.content_toggle_theme), tint = if (isDarkTheme) EmeraldGreen else LogoPurple, modifier = Modifier.size(18.dp))
                 }
-                "HISTORY" -> {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("ZEE ", fontSize = 18.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.5.sp)
-                        Text("HISTORY", fontSize = 18.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.5.sp)
-                    }
-                }
-                else -> {
-                    Text(text = title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LogoPurple, letterSpacing = 1.sp)
+                IconButton(onClick = onSettingsClick, modifier = Modifier.size(40.dp)) {
+                    Icon(imageVector = if (!showSettings) Icons.Default.Home else Icons.Default.Settings, contentDescription = stringResource(R.string.content_navigate), tint = LogoPurple, modifier = Modifier.size(18.dp))
                 }
             }
-        },
-        actions = {
-            IconButton(onClick = onThemeToggle) {
-                Icon(
-                    painter = painterResource(id = if (isDarkTheme) R.drawable.ic_light_mode else R.drawable.ic_dark_mode),
-                    contentDescription = stringResource(R.string.content_toggle_theme),
-                    tint = if (isDarkTheme) EmeraldGreen else LogoPurple,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-            IconButton(onClick = onSettingsClick) {
-                Icon(
-                    imageVector = if (!showSettings) Icons.Default.Home else Icons.Default.Settings,
-                    contentDescription = stringResource(R.string.content_navigate),
-                    tint = LogoPurple
-                )
-            }
-        },
-        colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent)
-    )
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
