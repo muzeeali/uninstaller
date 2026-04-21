@@ -371,6 +371,14 @@ object AdManager {
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT
             )
+            // Ensure the native AdView has no background/padding so the Compose
+            // layout behind it shows through and there is no visible "cover".
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            setPadding(0, 0, 0, 0)
+            try {
+                // AdView extends ViewGroup; disable clipping to padding when available.
+                this.setClipToPadding(false)
+            } catch (_: Exception) { /* best-effort */ }
             adListener = object : AdListener() {
                 override fun onAdLoaded() {
                     onLoaded()
