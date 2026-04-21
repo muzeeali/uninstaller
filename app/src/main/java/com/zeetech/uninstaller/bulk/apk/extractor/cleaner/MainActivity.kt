@@ -1801,7 +1801,8 @@ fun HomeScreen(
                 onClick = onDeepCleanStart,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(bottom = 70.dp, end = 16.dp),
+                    .navigationBarsPadding()
+                    .padding(bottom = 120.dp, end = 16.dp),
                 containerColor = EmeraldGreen,
                 contentColor = Color.White,
                 shape = RoundedCornerShape(16.dp)
@@ -2465,9 +2466,9 @@ fun BannerAdView() {
         modifier = Modifier
             .fillMaxWidth()
             .wrapContentHeight()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .navigationBarsPadding(),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
         tonalElevation = 2.dp,
         shadowElevation = 0.dp
     ) {
@@ -2475,14 +2476,14 @@ fun BannerAdView() {
             modifier = Modifier
                 .fillMaxWidth()
                 .wrapContentHeight()
-                .padding(vertical = 8.dp, horizontal = 12.dp),
+                .padding(horizontal = 12.dp, vertical = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
                 text = "Advertisement",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
+                modifier = Modifier.padding(bottom = 4.dp)
             )
 
             AndroidView(
