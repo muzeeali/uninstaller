@@ -435,4 +435,3 @@ object AdManager {
         recordInterstitialEventAndMaybeShow(onDismiss)
     }
 }
-}
