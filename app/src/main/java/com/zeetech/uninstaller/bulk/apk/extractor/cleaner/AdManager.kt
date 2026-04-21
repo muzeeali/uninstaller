@@ -11,6 +11,7 @@ import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
 import com.google.ads.mediation.admob.AdMobAdapter
 // No import needed for BuildConfig in same package
+import com.google.android.gms.ads.AdListener
 import com.google.android.gms.ads.FullScreenContentCallback
 import com.google.android.gms.ads.LoadAdError
 import com.google.android.gms.ads.MobileAds
@@ -353,7 +354,11 @@ object AdManager {
     fun isRewardedReady() = rewardedAd != null
 
     // --- Banner helper (returns configured AdView)
-    fun createAdaptiveBanner(context: Context): AdView {
+    fun createAdaptiveBanner(
+        context: Context,
+        onLoaded: () -> Unit = {},
+        onFailed: () -> Unit = {}
+    ): AdView {
         val adView = AdView(context).apply {
             val displayMetrics = context.resources.displayMetrics
             val adWidth = (displayMetrics.widthPixels / displayMetrics.density).toInt()
@@ -363,6 +368,14 @@ object AdManager {
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT
             )
+            adListener = object : AdListener() {
+                override fun onAdLoaded() {
+                    onLoaded()
+                }
+                override fun onAdFailedToLoad(error: LoadAdError) {
+                    onFailed()
+                }
+            }
         }
         adView.loadAd(buildAdRequest())
         return adView

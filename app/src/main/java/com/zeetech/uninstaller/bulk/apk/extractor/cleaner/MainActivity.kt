@@ -2455,23 +2455,29 @@ fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, on
 @Composable
 fun BannerAdView() {
     val context = LocalContext.current
-    val isDarkTheme = isSystemInDarkTheme()
-    val backgroundColor = if (isDarkTheme) Color.Black else Color.White
-    val contentColor = if (isDarkTheme) Color.White else Color.Black
+    var isAdLoaded by remember { mutableStateOf(false) }
     // Use centralized AdManager to create and manage banners
-    val adView = remember { AdManager.createAdaptiveBanner(context) }
+    val adView = remember {
+        AdManager.createAdaptiveBanner(
+            context,
+            onLoaded = { isAdLoaded = true },
+            onFailed = { isAdLoaded = false }
+        )
+    }
 
     DisposableEffect(adView) {
         onDispose { AdManager.destroyBanner(adView) }
     }
+
+    if (!isAdLoaded) return
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .wrapContentHeight()
             .navigationBarsPadding(),
-        color = backgroundColor,
-        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
+        shape = RoundedCornerShape(0.dp),
         tonalElevation = 2.dp,
         shadowElevation = 0.dp
     ) {
@@ -2485,7 +2491,7 @@ fun BannerAdView() {
             Text(
                 text = "Advertisement",
                 style = MaterialTheme.typography.labelSmall,
-                color = contentColor,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 4.dp)
             )
 
