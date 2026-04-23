@@ -91,14 +91,11 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import com.google.android.gms.ads.AdRequest
-import com.google.android.gms.ads.AdSize
-import com.google.android.gms.ads.AdView
 import android.view.ViewGroup
-import androidx.compose.ui.viewinterop.AndroidView
 import com.google.android.play.core.install.model.ActivityResult
 
 class MainActivity : ComponentActivity() {
+    private var appLifecycleFirstStart = true
     private lateinit var viewModel: AppViewModel
     private var pendingHistoryApp: AppInfo? = null
     lateinit var updateManager: UpdateManager
@@ -115,11 +112,8 @@ class MainActivity : ComponentActivity() {
             viewModel.refreshList { isGone ->
                 if (isGone) {
                     pendingHistoryApp?.let { app -> viewModel.addToHistory(app) }
-                    // Show interstitial after confirmed single uninstall
-                    AdManager.onUninstallConfirmed(onDismiss = {
-                        // Trigger 2: After Successful Uninstall
-                        showActionRatingPrompt()
-                    })
+                    // Trigger 2: After Successful Uninstall
+                    showActionRatingPrompt()
                 }
                 pendingHistoryApp = null
             }
@@ -170,20 +164,12 @@ class MainActivity : ComponentActivity() {
                 // Auto-refresh lists and detect uninstalled apps on resume
                 viewModel.refreshHistory()
                 // Wait for the ad to be dismissed or failed before showing the rating prompt
-                AdManager.showAppOpenAdIfAvailable {
-                    if (!AdManager.appLifecycleFirstStart) {
-                        showForegroundRatingPrompt()
-                    }
-                    AdManager.appLifecycleFirstStart = false
+                if (!appLifecycleFirstStart) {
+                    showForegroundRatingPrompt()
                 }
+                appLifecycleFirstStart = false
             }
         })
-
-        // Initialize AdMob SDK
-        AdManager.initialize(this)
-
-        // Show App Open ad on cold start (compliant launch monetization)
-        AdManager.showAppOpenAdIfAvailable()
         
         // Automated Surgical Scan on Launch
         if (viewModel.scanOnLaunch.value && viewModel.hasAllFilesAccess()) {
@@ -321,8 +307,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Refresh AdManager's weak reference to Activity on every resume
-        AdManager.bindActivity(this)
+
 
         // Resume any ongoing IMMEDIATE updates (Google Play)
         if (::updateManager.isInitialized) {
@@ -335,7 +320,6 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         // Bind activity earlier (onStart) so ProcessLifecycleOwner's onStart observers
         // can access a valid Activity when attempting to show App Open ads.
-        AdManager.bindActivity(this)
     }
 
     override fun onTrimMemory(level: Int) {
@@ -1080,18 +1064,6 @@ fun UninstallerApp(
         )
     }
 
-    // ── Ad triggers on screen transitions ───────────────────────────────────
-    LaunchedEffect(currentScreen) {
-        // Trigger 5: Fire on ENTERING settings
-        if (currentScreen == "settings") {
-            AdManager.onEnteredSettings()
-        }
-        // Trigger 6: Any transition TO home counts
-        if (currentScreen == "home" && prevScreen != "home") {
-            AdManager.onNavigatedToHome()
-        }
-        prevScreen = currentScreen
-    }
 
 
 
@@ -1208,11 +1180,9 @@ fun UninstallerApp(
                     onRefresh = when (currentScreen) {
                         "home" -> {{
                             viewModel.refreshList()
-                            // AdManager.onHomeRefreshTapped() is correctly called in HomeScreen's PullToRefresh
                         }}
                         "history" -> {{ 
                             viewModel.refreshHistory()
-                            AdManager.onHistoryRefreshTapped()
                         }}
                         else -> null
                     },
@@ -1226,7 +1196,6 @@ fun UninstallerApp(
                     }} else null,
                     onSettingsNav = if (currentScreen == "history") {{ currentScreen = "settings" }} else null,
                     onHistory = if (currentScreen != "history") {{
-                        AdManager.onNavigateToHistory()
                         currentScreen = "history"
                     }} else null
                 )
@@ -1249,9 +1218,7 @@ fun UninstallerApp(
                     // Navigate home immediately, then show the ad after the DONE tap.
                     CleanFinishedScreen {
                         viewModel.backToHome()
-                        AdManager.showInterstitial(onDismiss = {
-                            activity?.showActionRatingPrompt()
-                        })
+                        activity?.showActionRatingPrompt()
                     }
                 }
                 is AppUiState.Success -> {
@@ -1285,33 +1252,18 @@ fun UninstallerApp(
                             },
                             onRefresh = { 
                                 viewModel.refreshList() 
-                                AdManager.onHomeRefreshTapped()
                             },
                             onExtract = { 
-                                // Premium Feature: Bypass cooldown
-                                AdManager.onExtractTapped(onDismiss = {
-                                    viewModel.extractApk(it, haptics)
-                                    activity?.showActionRatingPrompt()
-                                })
+                                viewModel.extractApk(it, haptics)
+                                activity?.showActionRatingPrompt()
                             },
                             onBulkUninstall = { apps, doUninstall ->
-                                if (AdManager.isRewardedReady()) {
-                                    AdManager.showRewarded(
-                                        onRewardEarned = {
-                                            doUninstall()
-                                            activity?.showActionRatingPrompt()
-                                        },
-                                        onDismiss = {}
-                                    )
-                                } else {
-                                    doUninstall()
-                                    activity?.showActionRatingPrompt()
-                                }
+                                doUninstall()
+                                activity?.showActionRatingPrompt()
                             },
-                            isBulkAdUnlocked = AdManager.rewardedUnlockActive,
-                            onTabSwitched = { AdManager.onTabSwitched() },
-                            onSelectAll = { AdManager.onSelectAll() },
-                            onSelectionChanged = { count -> AdManager.onSelectionChanged(count) }
+                            onTabSwitched = { },
+                            onSelectAll = { },
+                            onSelectionChanged = { count -> }
                         )
                     } else if (currentScreen == "history") {
                         val history by viewModel.uninstalledHistory.collectAsState()
@@ -1500,7 +1452,6 @@ fun HomeScreen(
     onRefresh: () -> Unit,
     onExtract: (AppInfo) -> Unit,
     onBulkUninstall: (List<AppInfo>, () -> Unit) -> Unit = { _, action -> action() },
-    isBulkAdUnlocked: Boolean,
     onTabSwitched: () -> Unit = {},
     onSelectAll: () -> Unit = {},
     onSelectionChanged: (Int) -> Unit = {}
@@ -1510,7 +1461,6 @@ fun HomeScreen(
     val pagerState = rememberPagerState(pageCount = { 2 })
     var previousPage by remember { mutableIntStateOf(0) }
     val coroutineScope = rememberCoroutineScope()
-    val isRewardedReady by AdManager.isRewardedReadyFlow.collectAsState()
     
     LaunchedEffect(pagerState.currentPage) {
         if (pagerState.currentPage != previousPage) {
@@ -1824,16 +1774,7 @@ fun HomeScreen(
             }
         }
         
-        // 6. Banner Ad — always visible at absolute bottom when no bulk bar
-        if (selectedApps.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-            ) {
-                BannerAdView()
-            }
-        }
+
 
         // 7. Bulk Action Bar (At the absolute bottom)
         if (selectedApps.isNotEmpty()) {
@@ -1842,7 +1783,7 @@ fun HomeScreen(
                 BulkActionBar(
                     count = selectedApps.size,
                     reclaimedSpace = formatSize(selectedApps.sumOf { it.sizeBytes }),
-                    isAdUnlocked = if (selectedApps.size == 1) !isRewardedReady || isBulkAdUnlocked else !isRewardedReady,
+                    isAdUnlocked = true,
                     onUninstall = {
                         val appsToUninstall = selectedApps.toList()
                         if (appsToUninstall.size == 1) {
@@ -1851,11 +1792,7 @@ fun HomeScreen(
                                 selectedApps.clear()
                                 onSelectionChanged(0)
                             }
-                            if (AdManager.isRewardedReady() && !isBulkAdUnlocked) {
-                                AdManager.showRewarded(onRewardEarned = action, onDismiss = {})
-                            } else {
-                                action()
-                            }
+                            action()
                         } else {
                             onBulkUninstall(appsToUninstall) {
                                 appsToUninstall.forEach { 
@@ -2357,10 +2294,7 @@ fun DeepCleanProgressScreen(progress: Float, currentTask: String) {
             Spacer(modifier = Modifier.height(32.dp))
         }
 
-        // Banner ad anchored to absolute bottom (Matching Home layout)
-        Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
-            BannerAdView()
-        }
+
     }
 }
 
@@ -2407,11 +2341,8 @@ fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, on
                 Spacer(modifier = Modifier.height(36.dp))
                 Button(
                     onClick = {
-                        // Navigate home immediately, then show an interstitial (same behavior as performed-clean path)
                         onCancel()
-                        AdManager.showInterstitial(onDismiss = {
-                            activity?.showActionRatingPrompt()
-                        })
+                        activity?.showActionRatingPrompt()
                     },
                     modifier = Modifier.fillMaxWidth().height(60.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = LogoPurple),
@@ -2459,64 +2390,12 @@ fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, on
             }
         }
 
-        // Banner ad anchored to absolute bottom
-        Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
-            BannerAdView()
-        }
+
     }
 }
 
-// ─── Reusable Banner Ad Composable ──────────────────────────────────────────
-@Composable
-fun BannerAdView() {
-    val context = LocalContext.current
-    // Use MaterialTheme colorScheme so banner label follows the app's theme toggle
-    val contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-    // Use centralized AdManager to create and manage banners
-    val adView = remember { AdManager.createAdaptiveBanner(context) }
 
-    DisposableEffect(adView) {
-        onDispose { AdManager.destroyBanner(adView) }
-    }
 
-    // Render the native AdView with a clear, visible "Advertisement" label
-    // above it so creatives cannot be mistaken for system UI or dialogs.
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .wrapContentHeight()
-            .navigationBarsPadding(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        // Small label to make it explicit this is an ad
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.06f),
-                shape = RoundedCornerShape(8.dp),
-                tonalElevation = 0.dp
-            ) {
-                Text(
-                    text = "Advertisement",
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                    fontSize = 10.sp,
-                    color = contentColor
-                )
-            }
-        }
-
-        AndroidView(
-            modifier = Modifier
-                .fillMaxWidth()
-                .wrapContentHeight(),
-            factory = { _ -> adView }
-        )
-    }
-}
 
 @Composable
 fun CleanFinishedScreen(onDone: () -> Unit) {
@@ -2549,10 +2428,7 @@ fun CleanFinishedScreen(onDone: () -> Unit) {
             }
         }
 
-        // Banner ad anchored to absolute bottom (Matching Home layout)
-        Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
-            BannerAdView()
-        }
+
     }
 }
 
@@ -2917,14 +2793,7 @@ fun SettingsScreen(viewModel: AppViewModel, ratingManager: RatingManager) {
         }
     }
     
-    // Banner Ad at absolute bottom
-    Box(
-        modifier = Modifier
-            .align(Alignment.BottomCenter)
-            .fillMaxWidth()
-    ) {
-        BannerAdView()
-    }
+
     }
 }
 
@@ -3113,14 +2982,7 @@ fun HistoryScreen(
             }
         }
         
-        // Banner Ad at absolute bottom
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-        ) {
-            BannerAdView()
-        }
+
     }
 }
 
