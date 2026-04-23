@@ -58,7 +58,7 @@ Notes / current status (what was changed and what remains)
 -- Test ad unit IDs in source: REMOVED. `AdManager` no longer contains hard-coded test ad unit IDs; use Ad Inspector or configure test devices via the Google Mobile Ads SDK during development.
 - Google Mobile Ads SDK: UPDATED to a recent stable release (`com.google.android.gms:play-services-ads:25.2.0`) in `app/build.gradle.kts`.
 - Bypass removal: The `forceAlways` bypass was removed from callsites and the `showInterstitial` signature was simplified — all interstitials now respect the centralized cooldowns/caps.
-- App version: BUMPED to `versionName=1.0.6`, `versionCode=7`.
+- App version: BUMPED to `versionName=1.0.7`, `versionCode=8`.
 
 Remaining high-priority actions (manual / dashboard)
 
