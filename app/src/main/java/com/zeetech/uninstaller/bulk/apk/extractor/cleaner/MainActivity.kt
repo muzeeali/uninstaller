@@ -2479,8 +2479,8 @@ fun BannerAdView() {
         onDispose { AdManager.destroyBanner(adView) }
     }
 
-    // Render the native AdView directly with no surrounding label or padding so
-    // there's no visible cover around the ad creative.
+    // Render the native AdView with a clear, visible "Advertisement" label
+    // above it so creatives cannot be mistaken for system UI or dialogs.
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -2488,6 +2488,27 @@ fun BannerAdView() {
             .navigationBarsPadding(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // Small label to make it explicit this is an ad
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.06f),
+                shape = RoundedCornerShape(8.dp),
+                tonalElevation = 0.dp
+            ) {
+                Text(
+                    text = "Advertisement",
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    fontSize = 10.sp,
+                    color = contentColor
+                )
+            }
+        }
+
         AndroidView(
             modifier = Modifier
                 .fillMaxWidth()

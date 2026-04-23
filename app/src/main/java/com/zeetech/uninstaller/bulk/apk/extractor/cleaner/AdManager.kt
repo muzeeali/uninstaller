@@ -66,7 +66,8 @@ object AdManager {
     private var appOpenShownThisColdStart = false
     private var pendingShowAppOpenOnLoad = false
     // If true, allow showing App Open on every foreground resume (not just once per cold start)
-    var appOpenShowEveryResume: Boolean = true
+    // Set to false to avoid showing App Open on every resume; prefer cold-start only.
+    var appOpenShowEveryResume: Boolean = false
     // Tracks whether the application lifecycle onStart has run at least once.
     // Used by MainActivity to decide first-start behavior across Activity recreations.
     var appLifecycleFirstStart = true
@@ -161,7 +162,30 @@ object AdManager {
     private fun canShowFullScreen(): Boolean {
         if (DEBUG_SUPPRESS_ADS) return false
         if (isAdShowing) return false
+        
+        val now = System.currentTimeMillis()
+
+        // Enforce minimum interval since last full-screen ad
+        if (lastFullScreenAdTimestamp != 0L && (now - lastFullScreenAdTimestamp) < MIN_FULL_SCREEN_AD_INTERVAL_MS) return false
+
+        // Sliding window cap: remove old entries
+        fullScreenAdTimestamps.removeAll { it < now - FULL_SCREEN_WINDOW_MS }
+        if (fullScreenAdTimestamps.size >= MAX_FULL_SCREEN_IN_WINDOW) return false
+
         return true
+    }
+
+    // --- Full-screen ad rate limiting
+    private var lastFullScreenAdTimestamp: Long = 0L
+    private val fullScreenAdTimestamps: MutableList<Long> = mutableListOf()
+    private const val MIN_FULL_SCREEN_AD_INTERVAL_MS = 90_000L // 90 seconds
+    private const val FULL_SCREEN_WINDOW_MS = 10 * 60 * 1000L // 10 minutes
+    private const val MAX_FULL_SCREEN_IN_WINDOW = 3
+
+    private fun recordFullScreenAdShown() {
+        val now = System.currentTimeMillis()
+        lastFullScreenAdTimestamp = now
+        fullScreenAdTimestamps.add(now)
     }
     
 
@@ -218,6 +242,11 @@ object AdManager {
 
         isAdShowing = true
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
+            override fun onAdShowedFullScreenContent() {
+                // Record timestamp immediately when the ad becomes visible so rate
+                // limits account for actual impressions rather than dismissals.
+                recordFullScreenAdShown()
+            }
             override fun onAdDismissedFullScreenContent() {
                 isAdShowing = false
                 appOpenAd = null
@@ -277,6 +306,9 @@ object AdManager {
 
         isAdShowing = true
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
+            override fun onAdShowedFullScreenContent() {
+                recordFullScreenAdShown()
+            }
             override fun onAdDismissedFullScreenContent() {
                 isAdShowing = false
                 interstitialAd = null
@@ -334,6 +366,9 @@ object AdManager {
         isAdShowing = true
         var isRewardEarned = false
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
+            override fun onAdShowedFullScreenContent() {
+                recordFullScreenAdShown()
+            }
             override fun onAdDismissedFullScreenContent() {
                 isAdShowing = false
                 rewardedAd = null
@@ -432,7 +467,13 @@ object AdManager {
     }
 
     fun onEnteredSettings() {
-        recordInterstitialEventAndMaybeShow()
+        // Do NOT trigger a full-screen interstitial when the user navigates to
+        // Settings. Showing a full-screen ad from a Settings tap can resemble
+        // system dialogs/notifications and may be considered deceptive.
+        //
+        // Instead, only preload an interstitial for later natural transitions
+        // and avoid incrementing the universal interstitial event counter.
+        loadInterstitial()
     }
 
     fun onNavigatedToHome() {
