@@ -2473,7 +2473,7 @@ fun BannerAdView() {
     // Use MaterialTheme colorScheme so banner label follows the app's theme toggle
     val contentColor = MaterialTheme.colorScheme.onSurfaceVariant
     // Use centralized AdManager to create and manage banners
-    val adView = remember { AdManager.createAdaptiveBanner(context) }
+    val adView = remember { AdManager.createAdaptiveBanner(context) } ?: return
 
     DisposableEffect(adView) {
         onDispose { AdManager.destroyBanner(adView) }
