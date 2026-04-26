@@ -505,7 +505,7 @@ object AdManager {
             return
         }
         eventCount++
-        val shouldShow = eventCount == 1 || (eventCount - 1) % interstitialFrequency == 0
+        val shouldShow = eventCount % interstitialFrequency == 0
         Logger.d(TAG, "Counter event #$eventCount (freq=$interstitialFrequency). shouldShow=$shouldShow")
         if (shouldShow && !isAdShowing) {
             showInterstitial(onDismiss)
