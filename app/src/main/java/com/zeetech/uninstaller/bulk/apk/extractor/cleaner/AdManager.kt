@@ -158,8 +158,8 @@ object AdManager {
                     appOpenAdsEnabled = remoteConfig.getBoolean("app_open_ads_enabled")
                     alwaysOnInterstitialEnabled = remoteConfig.getBoolean("always_on_interstitial_enabled")
                     counterInterstitialEnabled = remoteConfig.getBoolean("counter_interstitial_enabled")
-                    interstitialFrequency = remoteConfig.getLong("interstitial_counter_frequency").toInt()
-                    Logger.d(TAG, "Remote Config updated: adsEnabled=$adsEnabled")
+                    interstitialFrequency = remoteConfig.getLong("interstitial_counter_frequency").toInt().coerceAtLeast(1)
+                    Logger.d(TAG, "Remote Config updated: adsEnabled=$adsEnabled, freq=$interstitialFrequency")
                 }
             }
         } catch (e: Exception) {
@@ -218,24 +218,13 @@ object AdManager {
         if (DEBUG_SUPPRESS_ADS) return false
         if (isAdShowing) return false
         
-        val now = System.currentTimeMillis()
-
-        // Enforce minimum interval since last full-screen ad
-        if (lastFullScreenAdTimestamp != 0L && (now - lastFullScreenAdTimestamp) < MIN_FULL_SCREEN_AD_INTERVAL_MS) return false
-
-        // Sliding window cap: remove old entries
-        fullScreenAdTimestamps.removeAll { it < now - FULL_SCREEN_WINDOW_MS }
-        if (fullScreenAdTimestamps.size >= MAX_FULL_SCREEN_IN_WINDOW) return false
-
         return true
     }
 
     // --- Full-screen ad rate limiting
     private var lastFullScreenAdTimestamp: Long = 0L
     private val fullScreenAdTimestamps: MutableList<Long> = mutableListOf()
-    private const val MIN_FULL_SCREEN_AD_INTERVAL_MS = 90_000L // 90 seconds
-    private const val FULL_SCREEN_WINDOW_MS = 10 * 60 * 1000L // 10 minutes
-    private const val MAX_FULL_SCREEN_IN_WINDOW = 3
+    // Rate limiting removed per user request for "no requirements of 90 sec or any other"
 
     private fun recordFullScreenAdShown() {
         val now = System.currentTimeMillis()
@@ -510,12 +499,18 @@ object AdManager {
 
     // --- Category 2: Counter Method
     private fun recordCounterEvent(onDismiss: () -> Unit = {}) {
-        if (!adsEnabled || !interstitialAdsEnabled || !counterInterstitialEnabled) { onDismiss(); return }
+        if (!adsEnabled || !interstitialAdsEnabled || !counterInterstitialEnabled) {
+            Logger.d(TAG, "Counter event ignored: adsEnabled=$adsEnabled, interstitialAdsEnabled=$interstitialAdsEnabled, counterInterstitialEnabled=$counterInterstitialEnabled")
+            onDismiss()
+            return
+        }
         eventCount++
         val shouldShow = eventCount == 1 || (eventCount - 1) % interstitialFrequency == 0
+        Logger.d(TAG, "Counter event #$eventCount (freq=$interstitialFrequency). shouldShow=$shouldShow")
         if (shouldShow && !isAdShowing) {
             showInterstitial(onDismiss)
         } else {
+            if (isAdShowing) Logger.d(TAG, "Counter event suppressed: Ad is already showing")
             onDismiss()
         }
     }
