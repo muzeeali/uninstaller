@@ -29,6 +29,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -101,6 +102,7 @@ import com.google.android.play.core.install.model.ActivityResult
 class MainActivity : ComponentActivity() {
     private lateinit var viewModel: AppViewModel
     private var pendingHistoryApp: AppInfo? = null
+    private var isAlwaysOnUninstall = false
     lateinit var updateManager: UpdateManager
     lateinit var ratingManager: RatingManager
     private var showRatingDialog by mutableStateOf(false)
@@ -113,15 +115,22 @@ class MainActivity : ComponentActivity() {
             // Android doesn't return a reliable SUCCESS for uninstalls, 
             // so we refresh and check if the package is gone.
             viewModel.refreshList { isGone ->
-                if (isGone) {
-                    pendingHistoryApp?.let { app -> viewModel.addToHistory(app) }
-                    // Show interstitial after confirmed single uninstall
+                if (isAlwaysOnUninstall) {
                     AdManager.onUninstallConfirmed(onDismiss = {
-                        // Trigger 2: After Successful Uninstall
+                        showActionRatingPrompt()
+                    })
+                } else {
+                    AdManager.onSingleUninstallFromBar(onDismiss = {
                         showActionRatingPrompt()
                     })
                 }
+                
+                if (isGone) {
+                    pendingHistoryApp?.let { app -> viewModel.addToHistory(app) }
+                }
+                
                 pendingHistoryApp = null
+                isAlwaysOnUninstall = false
             }
         } else {
             pendingHistoryApp = null
@@ -246,8 +255,9 @@ class MainActivity : ComponentActivity() {
                         ratingManager = ratingManager,
                         isDarkTheme = darkTheme,
                         onThemeToggle = { darkTheme = !darkTheme },
-                        onUninstallRequest = { app ->
+                        onUninstallRequest = { app, alwaysOn ->
                             pendingHistoryApp = app
+                            isAlwaysOnUninstall = alwaysOn
                             val intent = Intent(Intent.ACTION_DELETE).apply {
                                 data = Uri.parse("package:${app.packageName}")
                             }
@@ -1051,7 +1061,7 @@ fun UninstallerApp(
     ratingManager: RatingManager,
     isDarkTheme: Boolean,
     onThemeToggle: () -> Unit,
-    onUninstallRequest: (AppInfo) -> Unit,
+    onUninstallRequest: (AppInfo, Boolean) -> Unit,
     onRequestStoragePermission: () -> Unit
 ) {
     var currentScreen by rememberSaveable { mutableStateOf("home") }
@@ -1081,17 +1091,7 @@ fun UninstallerApp(
     }
 
     // ── Ad triggers on screen transitions ───────────────────────────────────
-    LaunchedEffect(currentScreen) {
-        // Trigger 5: Fire on ENTERING settings
-        if (currentScreen == "settings") {
-            AdManager.onEnteredSettings()
-        }
-        // Trigger 6: Any transition TO home counts
-        if (currentScreen == "home" && prevScreen != "home") {
-            AdManager.onNavigatedToHome()
-        }
-        prevScreen = currentScreen
-    }
+
 
 
 
@@ -1163,6 +1163,7 @@ fun UninstallerApp(
     }
 
     BackHandler(enabled = currentScreen != "home") {
+        if (currentScreen == "settings") AdManager.onNavigatedHomeFromSettings()
         currentScreen = "home"
     }
 
@@ -1197,6 +1198,7 @@ fun UninstallerApp(
                     isDarkTheme = isDarkTheme,
                     onThemeToggle = onThemeToggle,
                     onSettingsClick = {
+                        if (currentScreen == "settings") AdManager.onNavigatedHomeFromSettings()
                         currentScreen = when (currentScreen) {
                             "home" -> "settings"
                             "history" -> "home"
@@ -1212,7 +1214,6 @@ fun UninstallerApp(
                         }}
                         "history" -> {{ 
                             viewModel.refreshHistory()
-                            AdManager.onHistoryRefreshTapped()
                         }}
                         else -> null
                     },
@@ -1226,7 +1227,6 @@ fun UninstallerApp(
                     }} else null,
                     onSettingsNav = if (currentScreen == "history") {{ currentScreen = "settings" }} else null,
                     onHistory = if (currentScreen != "history") {{
-                        AdManager.onNavigateToHistory()
                         currentScreen = "history"
                     }} else null
                 )
@@ -1249,7 +1249,7 @@ fun UninstallerApp(
                     // Navigate home immediately, then show the ad after the DONE tap.
                     CleanFinishedScreen {
                         viewModel.backToHome()
-                        AdManager.showInterstitial(onDismiss = {
+                        AdManager.onCleanFinishedDone(onDismiss = {
                             activity?.showActionRatingPrompt()
                         })
                     }
@@ -1283,16 +1283,19 @@ fun UninstallerApp(
                                     viewModel.startDeepClean()
                                 }
                             },
-                            onRefresh = { 
-                                viewModel.refreshList() 
-                                AdManager.onHomeRefreshTapped()
-                            },
                             onExtract = { 
-                                // Premium Feature: Bypass cooldown
-                                AdManager.onExtractTapped(onDismiss = {
-                                    viewModel.extractApk(it, haptics)
+                                viewModel.extractApk(it, haptics)
+                                AdManager.onExtractApkSuccess(onDismiss = {
                                     activity?.showActionRatingPrompt()
                                 })
+                            },
+                            onRefreshButton = { 
+                                viewModel.refreshList()
+                                AdManager.onHomeRefreshTapped()
+                            },
+                            onSwipeRefresh = {
+                                viewModel.refreshList()
+                                AdManager.onSwipeToRefresh()
                             },
                             onBulkUninstall = { apps, doUninstall ->
                                 if (AdManager.isRewardedReady()) {
@@ -1309,7 +1312,8 @@ fun UninstallerApp(
                                 }
                             },
                             isBulkAdUnlocked = AdManager.rewardedUnlockActive,
-                            onTabSwitched = { AdManager.onTabSwitched() },
+                            onTabClicked = { AdManager.onTabSwitchedByClick() },
+                            onTabSwiped = { AdManager.onTabSwitchedBySwipe() },
                             onSelectAll = { AdManager.onSelectAll() },
                             onSelectionChanged = { count -> AdManager.onSelectionChanged(count) }
                         )
@@ -1484,7 +1488,7 @@ fun Context.findActivity(): Activity? {
     return null
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
     apps: List<AppInfo>, 
@@ -1495,13 +1499,15 @@ fun HomeScreen(
     isAscending: Boolean,
     storageThreshold: Float,
     onSortChange: (String, Boolean) -> Unit,
-    onUninstallRequest: (AppInfo) -> Unit,
+    onUninstallRequest: (AppInfo, Boolean) -> Unit,
     onDeepCleanStart: () -> Unit,
-    onRefresh: () -> Unit,
     onExtract: (AppInfo) -> Unit,
+    onRefreshButton: () -> Unit,
+    onSwipeRefresh: () -> Unit,
     onBulkUninstall: (List<AppInfo>, () -> Unit) -> Unit = { _, action -> action() },
     isBulkAdUnlocked: Boolean,
-    onTabSwitched: () -> Unit = {},
+    onTabClicked: () -> Unit = {},
+    onTabSwiped: () -> Unit = {},
     onSelectAll: () -> Unit = {},
     onSelectionChanged: (Int) -> Unit = {}
 ) {
@@ -1514,7 +1520,7 @@ fun HomeScreen(
     
     LaunchedEffect(pagerState.currentPage) {
         if (pagerState.currentPage != previousPage) {
-            onTabSwitched()
+            onTabSwiped()
             previousPage = pagerState.currentPage
         }
     }
@@ -1746,6 +1752,7 @@ fun HomeScreen(
                                 .clip(RoundedCornerShape(16.dp))
                                 .background(if (isSelected) EmeraldGreen else Color.Transparent)
                                 .clickable {
+                                    onTabClicked()
                                     coroutineScope.launch { pagerState.animateScrollToPage(index) }
                                 },
                             contentAlignment = Alignment.Center
@@ -1766,7 +1773,7 @@ fun HomeScreen(
             // 4. Content Pager with Pull-to-Refresh
             PullToRefreshBox(
                 isRefreshing = isRefreshing,
-                onRefresh = { onRefresh() },
+                onRefresh = { onSwipeRefresh() },
                 modifier = Modifier.weight(1f)
             ) {
                 HorizontalPager(
@@ -1847,14 +1854,15 @@ fun HomeScreen(
                         val appsToUninstall = selectedApps.toList()
                         if (appsToUninstall.size == 1) {
                             val action = {
-                                onUninstallRequest(appsToUninstall.first())
+                                onUninstallRequest(appsToUninstall.first(), false)
                                 selectedApps.clear()
                                 onSelectionChanged(0)
                             }
                             if (AdManager.isRewardedReady() && !isBulkAdUnlocked) {
                                 AdManager.showRewarded(onRewardEarned = action, onDismiss = {})
                             } else {
-                                action()
+                                // Category 2: Single uninstall from bar
+                                onUninstallRequest(appsToUninstall.first(), false)
                             }
                         } else {
                             onBulkUninstall(appsToUninstall) {
@@ -1894,7 +1902,8 @@ fun HomeScreen(
                 isIconCached = cachedIcons.contains(app.packageName),
                 onDismiss = { appActionToShow = null },
                 onUninstall = { 
-                    onUninstallRequest(app)
+                    // Category 1: Always-On Uninstall
+                    onUninstallRequest(app, true)
                     appActionToShow = null
                 },
                 onLaunch = {
@@ -2409,7 +2418,7 @@ fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, on
                     onClick = {
                         // Navigate home immediately, then show an interstitial (same behavior as performed-clean path)
                         onCancel()
-                        AdManager.showInterstitial(onDismiss = {
+                        AdManager.onOptimizedScreenDone(onDismiss = {
                             activity?.showActionRatingPrompt()
                         })
                     },
@@ -2453,7 +2462,10 @@ fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, on
                     Text("CLEAN NOW", fontWeight = FontWeight.Black, fontSize = 20.sp, letterSpacing = 1.sp)
                 }
                 Spacer(modifier = Modifier.height(16.dp))
-                TextButton(onClick = onCancel) {
+                TextButton(onClick = {
+                    onCancel()
+                    AdManager.onCleanFinishedCancel()
+                }) {
                     Text("DISCARD", color = Color.Gray.copy(alpha = 0.6f), fontWeight = FontWeight.Bold)
                 }
             }

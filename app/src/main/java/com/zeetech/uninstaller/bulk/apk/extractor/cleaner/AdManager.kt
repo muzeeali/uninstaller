@@ -33,11 +33,6 @@ import com.google.firebase.remoteconfig.remoteConfigSettings
 
 private const val TAG = "AdManager"
 
-// ─── Ad Unit IDs ────────────────────────────────────────────────────────────
-private const val AD_UNIT_APP_OPEN     = "ca-app-pub-6425054459696619/3748084648"
-private const val AD_UNIT_INTERSTITIAL = "ca-app-pub-6425054459696619/8013363790"
-private const val AD_UNIT_REWARDED     = "ca-app-pub-6425054459696619/1377906329"
-
 // NOTE: Test ad unit IDs removed from source. Production IDs below are used.
 
 object AdManager {
@@ -52,10 +47,10 @@ object AdManager {
     private var appCtx: Context? = null
 
     // Ad unit IDs (production)
-    private val AD_UNIT_APP_OPEN: String = "ca-app-pub-6425054459696619/3748084648"
-    private val AD_UNIT_INTERSTITIAL: String = "ca-app-pub-6425054459696619/8013363790"
-    private val AD_UNIT_REWARDED: String = "ca-app-pub-6425054459696619/1377906329"
-    private val AD_UNIT_BANNER: String = "ca-app-pub-6425054459696619/9326445462"
+    private const val AD_UNIT_APP_OPEN: String = "ca-app-pub-6425054459696619/3748084648"
+    private const val AD_UNIT_INTERSTITIAL: String = "ca-app-pub-6425054459696619/8013363790"
+    private const val AD_UNIT_REWARDED: String = "ca-app-pub-6425054459696619/1377906329"
+    private const val AD_UNIT_BANNER: String = "ca-app-pub-6425054459696619/9326445462"
 
     // Consent / personalization flags
     private var isPersonalizedAdsAllowed: Boolean = true
@@ -105,6 +100,15 @@ object AdManager {
     private var interstitialAdsEnabled = true
     private var rewardedAdsEnabled = true
     private var appOpenAdsEnabled = true
+    private var alwaysOnInterstitialEnabled = true
+    private var counterInterstitialEnabled = true
+    private var interstitialFrequency = 3
+
+    // Shared Interstitial Counter (Category 2)
+    private var eventCount = 0
+
+    // Selection cycle guard (resets when user deselects all)
+    private var selectionCycleTriggered = false
 
     // Initialize and preload
     fun initialize(activity: Activity) {
@@ -139,7 +143,10 @@ object AdManager {
                 "banner_ads_enabled" to true,
                 "interstitial_ads_enabled" to true,
                 "rewarded_ads_enabled" to true,
-                "app_open_ads_enabled" to true
+                "app_open_ads_enabled" to true,
+                "always_on_interstitial_enabled" to true,
+                "counter_interstitial_enabled" to true,
+                "interstitial_counter_frequency" to 3
             ))
 
             remoteConfig.fetchAndActivate().addOnCompleteListener { task ->
@@ -149,6 +156,9 @@ object AdManager {
                     interstitialAdsEnabled = remoteConfig.getBoolean("interstitial_ads_enabled")
                     rewardedAdsEnabled = remoteConfig.getBoolean("rewarded_ads_enabled")
                     appOpenAdsEnabled = remoteConfig.getBoolean("app_open_ads_enabled")
+                    alwaysOnInterstitialEnabled = remoteConfig.getBoolean("always_on_interstitial_enabled")
+                    counterInterstitialEnabled = remoteConfig.getBoolean("counter_interstitial_enabled")
+                    interstitialFrequency = remoteConfig.getLong("interstitial_counter_frequency").toInt()
                     Logger.d(TAG, "Remote Config updated: adsEnabled=$adsEnabled")
                 }
             }
@@ -335,13 +345,14 @@ object AdManager {
         )
     }
 
-    fun showInterstitial(onDismiss: () -> Unit = {}) {
+    fun showInterstitial(onDismiss: () -> Unit = {}, ignoreCooldown: Boolean = false) {
         if (!adsEnabled || !interstitialAdsEnabled) { onDismiss(); return }
         if (DEBUG_SUPPRESS_ADS) { onDismiss(); return }
         val activity = currentActivity() ?: run { onDismiss(); return }
 
-        // All interstitials must respect global cooldowns/caps
-        if (!canShowFullScreen()) {
+        // Category 2 (Counter) ads must respect global cooldowns/caps.
+        // Category 1 (Always-On) bypasses the 90s cooldown but still respects the "Is Ad Showing" lock.
+        if (!ignoreCooldown && !canShowFullScreen()) {
             onDismiss()
             return
         }
@@ -489,75 +500,92 @@ object AdManager {
 
     fun destroyBanner(adView: AdView?) { adView?.destroy() }
 
-    // --- Contextual trigger wrappers (preserve existing call sites)
-    /**
-     * Record an interstitial-triggering event. This will show an interstitial every
-     * INTERSTITIAL_AD_EVERY events.
-     */
-    private fun recordInterstitialEventAndMaybeShow(onDismiss: () -> Unit = {}) {
-        interstitialEventCount++
-        if (interstitialEventCount % INTERSTITIAL_AD_EVERY == 0) showInterstitial(onDismiss)
+    // --- Category 1: Always-On Method
+    fun showInterstitialAlwaysOn(onDismiss: () -> Unit = {}) {
+        if (!adsEnabled || !interstitialAdsEnabled || !alwaysOnInterstitialEnabled) { onDismiss(); return }
+        if (isAdShowing) { onDismiss(); return }
+        // Show immediately — no cooldown for Always-On
+        showInterstitial(onDismiss, ignoreCooldown = true)
+    }
+
+    // --- Category 2: Counter Method
+    private fun recordCounterEvent(onDismiss: () -> Unit = {}) {
+        if (!adsEnabled || !interstitialAdsEnabled || !counterInterstitialEnabled) { onDismiss(); return }
+        eventCount++
+        val shouldShow = eventCount == 1 || (eventCount - 1) % interstitialFrequency == 0
+        if (shouldShow && !isAdShowing) {
+            showInterstitial(onDismiss)
+        } else {
+            onDismiss()
+        }
     }
 
     fun onHomeRefreshTapped() {
-        recordInterstitialEventAndMaybeShow()
+        recordCounterEvent()
     }
 
     fun onHistoryRefreshTapped() {
-        recordInterstitialEventAndMaybeShow()
+        // Only removing the interstitial counter call as per plan
     }
 
     fun onSelectionChanged(newCount: Int) {
-        if (newCount == 0) selectionAdFiredThisCycle = false
-        if (newCount >= 3 && !selectionAdFiredThisCycle) {
-            selectionAdFiredThisCycle = true
-            recordInterstitialEventAndMaybeShow()
+        if (newCount == 0) selectionCycleTriggered = false
+        if (newCount >= 3 && !selectionCycleTriggered) {
+            selectionCycleTriggered = true
+            recordCounterEvent()
         }
     }
 
     fun onSelectAll() {
-        selectionAdFiredThisCycle = true
-        recordInterstitialEventAndMaybeShow()
+        selectionCycleTriggered = true
+        recordCounterEvent()
     }
 
-    fun onTabSwitched() {
-        recordInterstitialEventAndMaybeShow()
+    fun onTabSwitchedByClick() {
+        recordCounterEvent()
+    }
+
+    fun onTabSwitchedBySwipe() {
+        recordCounterEvent()
     }
 
     fun onEnteredSettings() {
-        // Do NOT trigger a full-screen interstitial when the user navigates to
-        // Settings. Showing a full-screen ad from a Settings tap can resemble
-        // system dialogs/notifications and may be considered deceptive.
-        //
-        // Instead, only preload an interstitial for later natural transitions
-        // and avoid incrementing the universal interstitial event counter.
         loadInterstitial()
     }
 
-    fun onNavigatedToHome() {
-        recordInterstitialEventAndMaybeShow()
+    fun onNavigatedHomeFromSettings() {
+        recordCounterEvent()
     }
 
-    // --- Semantic wrappers for direct callsites (preserve unified counting + allow onDismiss)
-    fun onExtractTapped(onDismiss: () -> Unit = {}) {
-        recordInterstitialEventAndMaybeShow(onDismiss)
+    fun onExtractApkSuccess(onDismiss: () -> Unit = {}) {
+        recordCounterEvent(onDismiss)
     }
 
     fun onNavigateToHistory(onDismiss: () -> Unit = {}) {
-        recordInterstitialEventAndMaybeShow(onDismiss)
+        onDismiss()
     }
 
     fun onCleanFinishedDone(onDismiss: () -> Unit = {}) {
-        // Clean finished is a natural transition; show an interstitial immediately if available.
-        showInterstitial(onDismiss)
+        showInterstitialAlwaysOn(onDismiss)
+    }
+
+    fun onOptimizedScreenDone(onDismiss: () -> Unit = {}) {
+        recordCounterEvent(onDismiss)
     }
 
     fun onCleanFinishedCancel(onDismiss: () -> Unit = {}) {
-        // Consider not showing on cancel; keep unified behavior but allow suppression here if desired
-        recordInterstitialEventAndMaybeShow(onDismiss)
+        recordCounterEvent(onDismiss)
+    }
+
+    fun onSingleUninstallFromBar(onDismiss: () -> Unit = {}) {
+        recordCounterEvent(onDismiss)
     }
 
     fun onUninstallConfirmed(onDismiss: () -> Unit = {}) {
-        recordInterstitialEventAndMaybeShow(onDismiss)
+        showInterstitialAlwaysOn(onDismiss)
+    }
+
+    fun onSwipeToRefresh() {
+        recordCounterEvent()
     }
 }
