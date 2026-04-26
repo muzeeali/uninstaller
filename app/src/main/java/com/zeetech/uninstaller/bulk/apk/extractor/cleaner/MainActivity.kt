@@ -57,6 +57,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -2372,105 +2373,193 @@ fun DeepCleanProgressScreen(progress: Float, currentTask: String) {
 
 @Composable
 fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, onCancel: () -> Unit) {
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    
     Box(modifier = Modifier.fillMaxSize()) {
         val context = LocalContext.current
         val activity = remember(context) { context.findActivity() as? MainActivity }
-        if (itemsCount == 0) {
-            // ── Nothing to clean: device is already optimized ─────────────────
-            Column(
+        
+        if (isLandscape) {
+            // ── LANDSCAPE COMPACT LAYOUT ──────────────────────────────────────────
+            Row(
                 modifier = Modifier
-                    .align(Alignment.Center)
-                    .padding(32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .fillMaxSize()
+                    .padding(24.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(24.dp)
             ) {
-                // Animated pulse on the check icon
-                val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-                val scale by infiniteTransition.animateFloat(
-                    initialValue = 1f, targetValue = 1.08f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(900, easing = FastOutSlowInEasing),
-                        repeatMode = RepeatMode.Reverse
-                    ),
-                    label = "scale"
-                )
-                Surface(
-                    shape = CircleShape,
-                    color = EmeraldGreen.copy(alpha = 0.12f),
-                    modifier = Modifier.size(130.dp).graphicsLayer(scaleX = scale, scaleY = scale)
-                ) {
-                    Icon(Icons.Default.CheckCircle, null, Modifier.padding(26.dp), tint = EmeraldGreen)
-                }
-                Spacer(modifier = Modifier.height(28.dp))
-                Text("100%", fontSize = 64.sp, fontWeight = FontWeight.Black, color = EmeraldGreen)
-                Text("OPTIMIZED", fontSize = 14.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 3.sp)
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    "Your device is already clean.\nNo junk files were found.",
-                    color = Color.Gray,
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                Spacer(modifier = Modifier.height(36.dp))
-                Button(
-                    onClick = {
-                        // Navigate home immediately, then show an interstitial (same behavior as performed-clean path)
-                        onCancel()
-                        AdManager.onOptimizedScreenDone(onDismiss = {
-                            activity?.showActionRatingPrompt()
-                        })
-                    },
-                    modifier = Modifier.fillMaxWidth().height(60.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = LogoPurple),
-                    shape = RoundedCornerShape(20.dp),
-                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp)
-                ) {
-                    Text("DONE", fontWeight = FontWeight.Black, fontSize = 18.sp, letterSpacing = 2.sp)
+                if (itemsCount == 0) {
+                    // Optimized Left
+                    Column(
+                        modifier = Modifier.weight(0.35f),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+                        val scale by infiniteTransition.animateFloat(
+                            initialValue = 1f, targetValue = 1.08f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(900, easing = FastOutSlowInEasing),
+                                repeatMode = RepeatMode.Reverse
+                            ),
+                            label = "scale"
+                        )
+                        Surface(
+                            shape = CircleShape,
+                            color = EmeraldGreen.copy(alpha = 0.12f),
+                            modifier = Modifier.size(80.dp).graphicsLayer(scaleX = scale, scaleY = scale)
+                        ) {
+                            Icon(Icons.Default.CheckCircle, null, Modifier.padding(16.dp), tint = EmeraldGreen)
+                        }
+                    }
+                    // Optimized Right
+                    Column(
+                        modifier = Modifier.weight(0.65f),
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text("100%", fontSize = 44.sp, fontWeight = FontWeight.Black, color = EmeraldGreen)
+                        Text("OPTIMIZED", fontSize = 12.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 2.sp)
+                        Text(
+                            "Your device is clean. No junk files found.",
+                            color = Color.Gray,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Button(
+                            onClick = {
+                                onCancel()
+                                AdManager.onOptimizedScreenDone(onDismiss = { activity?.showActionRatingPrompt() })
+                            },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = LogoPurple),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Text("DONE", fontWeight = FontWeight.Black, fontSize = 16.sp)
+                        }
+                    }
+                } else {
+                    // Analysis Left
+                    Column(
+                        modifier = Modifier.weight(0.35f),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Surface(shape = CircleShape, color = LogoPurple.copy(alpha = 0.1f), modifier = Modifier.size(70.dp)) {
+                            Icon(Icons.Default.Info, null, Modifier.padding(14.dp), tint = EmeraldGreen)
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(space, fontSize = 32.sp, fontWeight = FontWeight.Black, color = LogoPurple)
+                    }
+                    // Analysis Right
+                    Column(
+                        modifier = Modifier.weight(0.65f),
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text("ANALYSIS RESULT", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black, color = EmeraldGreen)
+                        Text("Ready to reclaim from $itemsCount zones", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Button(
+                            onClick = onClean,
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("CLEAN NOW", fontWeight = FontWeight.Black, fontSize = 18.sp)
+                        }
+                        TextButton(onClick = { onCancel() }) {
+                            Text("DISCARD", color = Color.Gray.copy(alpha = 0.6f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                    }
                 }
             }
         } else {
-            // ── Items found: show summary & start clean ───────────────────────
-            Column(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .padding(32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Surface(shape = CircleShape, color = LogoPurple.copy(alpha = 0.1f), modifier = Modifier.size(120.dp)) {
-                    Icon(Icons.Default.Info, null, Modifier.padding(24.dp), tint = EmeraldGreen)
-                }
-                Spacer(modifier = Modifier.height(32.dp))
-                Row {
-                    Text("ANALYSIS ", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = LogoPurple)
-                    Text("RESULT", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = EmeraldGreen)
-                }
-                Text("Surgical cleanup ready to reclaim", color = Color.Gray)
-                Text(space, fontSize = 56.sp, fontWeight = FontWeight.Black, color = LogoPurple)
-                Text("from $itemsCount cached zones", style = MaterialTheme.typography.bodyMedium, color = EmeraldGreen, fontWeight = FontWeight.Bold)
-
-                Spacer(modifier = Modifier.height(32.dp))
-                Button(
-                    // No ad before cleanup — ad fires on DONE after cleaning finishes
-                    onClick = onClean,
-                    modifier = Modifier.fillMaxWidth().height(60.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
-                    shape = RoundedCornerShape(16.dp),
-                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 8.dp)
+            // ── PORTRAIT LAYOUT (Existing) ────────────────────────────────────────
+            if (itemsCount == 0) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text("CLEAN NOW", fontWeight = FontWeight.Black, fontSize = 20.sp, letterSpacing = 1.sp)
+                    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+                    val scale by infiniteTransition.animateFloat(
+                        initialValue = 1f, targetValue = 1.08f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(900, easing = FastOutSlowInEasing),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "scale"
+                    )
+                    Surface(
+                        shape = CircleShape,
+                        color = EmeraldGreen.copy(alpha = 0.12f),
+                        modifier = Modifier.size(130.dp).graphicsLayer(scaleX = scale, scaleY = scale)
+                    ) {
+                        Icon(Icons.Default.CheckCircle, null, Modifier.padding(26.dp), tint = EmeraldGreen)
+                    }
+                    Spacer(modifier = Modifier.height(28.dp))
+                    Text("100%", fontSize = 64.sp, fontWeight = FontWeight.Black, color = EmeraldGreen)
+                    Text("OPTIMIZED", fontSize = 14.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 3.sp)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        "Your device is already clean.\nNo junk files were found.",
+                        color = Color.Gray,
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.height(36.dp))
+                    Button(
+                        onClick = {
+                            onCancel()
+                            AdManager.onOptimizedScreenDone(onDismiss = { activity?.showActionRatingPrompt() })
+                        },
+                        modifier = Modifier.fillMaxWidth().height(60.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = LogoPurple),
+                        shape = RoundedCornerShape(20.dp),
+                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp)
+                    ) {
+                        Text("DONE", fontWeight = FontWeight.Black, fontSize = 18.sp, letterSpacing = 2.sp)
+                    }
                 }
-                Spacer(modifier = Modifier.height(16.dp))
-                TextButton(onClick = {
-                    onCancel()
-                    // Ad trigger removed per policy (no ads on discard/cancel)
-                }) {
-                    Text("DISCARD", color = Color.Gray.copy(alpha = 0.6f), fontWeight = FontWeight.Bold)
+            } else {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Surface(shape = CircleShape, color = LogoPurple.copy(alpha = 0.1f), modifier = Modifier.size(120.dp)) {
+                        Icon(Icons.Default.Info, null, Modifier.padding(24.dp), tint = EmeraldGreen)
+                    }
+                    Spacer(modifier = Modifier.height(32.dp))
+                    Row {
+                        Text("ANALYSIS ", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = LogoPurple)
+                        Text("RESULT", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = EmeraldGreen)
+                    }
+                    Text("Surgical cleanup ready to reclaim", color = Color.Gray)
+                    Text(space, fontSize = 56.sp, fontWeight = FontWeight.Black, color = LogoPurple)
+                    Text("from $itemsCount cached zones", style = MaterialTheme.typography.bodyMedium, color = EmeraldGreen, fontWeight = FontWeight.Bold)
+
+                    Spacer(modifier = Modifier.height(32.dp))
+                    Button(
+                        onClick = onClean,
+                        modifier = Modifier.fillMaxWidth().height(60.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
+                        shape = RoundedCornerShape(16.dp),
+                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 8.dp)
+                    ) {
+                        Text("CLEAN NOW", fontWeight = FontWeight.Black, fontSize = 20.sp, letterSpacing = 1.sp)
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    TextButton(onClick = { onCancel() }) {
+                        Text("DISCARD", color = Color.Gray.copy(alpha = 0.6f), fontWeight = FontWeight.Bold)
+                    }
                 }
             }
-        }
 
-        // Banner ad anchored to absolute bottom
-        Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
-            BannerAdView()
+            // Banner ad anchored to absolute bottom (Portrait only)
+            Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
+                BannerAdView()
+            }
         }
     }
 }
@@ -2529,38 +2618,87 @@ fun BannerAdView() {
 
 @Composable
 fun CleanFinishedScreen(onDone: () -> Unit) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Surface(shape = CircleShape, color = EmeraldGreen.copy(alpha = 0.1f), modifier = Modifier.size(140.dp)) {
-                Icon(Icons.Default.CheckCircle, null, Modifier.padding(28.dp), tint = LogoPurple)
-            }
-            Spacer(modifier = Modifier.height(32.dp))
-            Row {
-                Text(stringResource(R.string.title_surgery), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = LogoPurple)
-                Text(stringResource(R.string.status_complete), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = EmeraldGreen)
-            }
-            Text(stringResource(R.string.device_optimized), textAlign = TextAlign.Center, color = Color.Gray, fontWeight = FontWeight.Medium)
-            
-            Spacer(modifier = Modifier.height(48.dp))
-            Button(
-                onClick = onDone, 
-                modifier = Modifier.fillMaxWidth().height(60.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = LogoPurple),
-                shape = RoundedCornerShape(20.dp),
-                elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp)
-            ) {
-                Text(stringResource(R.string.action_done), fontWeight = FontWeight.Black, fontSize = 18.sp, letterSpacing = 2.sp)
-            }
-        }
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() as? MainActivity }
 
-        // Banner ad anchored to absolute bottom (Matching Home layout)
-        Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
-            BannerAdView()
+    Box(modifier = Modifier.fillMaxSize()) {
+        if (isLandscape) {
+            // ── LANDSCAPE COMPACT LAYOUT ──────────────────────────────────────────
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(24.dp)
+            ) {
+                // Left Column: Icon
+                Column(
+                    modifier = Modifier.weight(0.35f),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Surface(shape = CircleShape, color = EmeraldGreen.copy(alpha = 0.1f), modifier = Modifier.size(80.dp)) {
+                        Icon(Icons.Default.CheckCircle, null, Modifier.padding(16.dp), tint = LogoPurple)
+                    }
+                }
+                // Right Column: Text + Button
+                Column(
+                    modifier = Modifier.weight(0.65f),
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Row {
+                        Text(stringResource(R.string.title_surgery), fontSize = 24.sp, fontWeight = FontWeight.Black, color = LogoPurple)
+                        Spacer(Modifier.width(4.dp))
+                        Text(stringResource(R.string.status_complete), fontSize = 24.sp, fontWeight = FontWeight.Black, color = EmeraldGreen)
+                    }
+                    Text(stringResource(R.string.device_optimized), color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = onDone, 
+                        modifier = Modifier.fillMaxWidth().height(50.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = LogoPurple),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Text(stringResource(R.string.action_done), fontWeight = FontWeight.Black, fontSize = 16.sp)
+                    }
+                }
+            }
+        } else {
+            // ── PORTRAIT LAYOUT (Existing) ────────────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Surface(shape = CircleShape, color = EmeraldGreen.copy(alpha = 0.1f), modifier = Modifier.size(140.dp)) {
+                    Icon(Icons.Default.CheckCircle, null, Modifier.padding(28.dp), tint = LogoPurple)
+                }
+                Spacer(modifier = Modifier.height(32.dp))
+                Row {
+                    Text(stringResource(R.string.title_surgery), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = LogoPurple)
+                    Text(stringResource(R.string.status_complete), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = EmeraldGreen)
+                }
+                Text(stringResource(R.string.device_optimized), textAlign = TextAlign.Center, color = Color.Gray, fontWeight = FontWeight.Medium)
+                
+                Spacer(modifier = Modifier.height(48.dp))
+                Button(
+                    onClick = onDone, 
+                    modifier = Modifier.fillMaxWidth().height(60.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = LogoPurple),
+                    shape = RoundedCornerShape(20.dp),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp)
+                ) {
+                    Text(stringResource(R.string.action_done), fontWeight = FontWeight.Black, fontSize = 18.sp, letterSpacing = 2.sp)
+                }
+            }
+
+            // Banner ad anchored to absolute bottom (Portrait only)
+            Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
+                BannerAdView()
+            }
         }
     }
 }
