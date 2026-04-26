@@ -81,17 +81,10 @@ object AdManager {
     val isRewardedReadyFlow = _isRewardedReadyFlow.asStateFlow()
     var rewardedUnlockActive = false
 
-    // Note: Interstitial frequency is controlled by event-based throttle (INTERSTITIAL_AD_EVERY).
-
     // Single universal interstitial event counter (used by all contextual triggers)
-    @Volatile
-    private var interstitialEventCount = 0
-    private const val INTERSTITIAL_AD_EVERY = 3 // show interstitial every N events
     // No persistence — counter is in-memory only
 
     // Preserve selection-cycle semantics (only fire once while user has >=3 selected)
-    private var selectionAdFiredThisCycle = false
-
     // No critical-flow suppression — event-based throttle controls shows
 
     // Remote Config flags
@@ -222,15 +215,7 @@ object AdManager {
     }
 
     // --- Full-screen ad rate limiting
-    private var lastFullScreenAdTimestamp: Long = 0L
-    private val fullScreenAdTimestamps: MutableList<Long> = mutableListOf()
-    // Rate limiting removed per user request for "no requirements of 90 sec or any other"
-
-    private fun recordFullScreenAdShown() {
-        val now = System.currentTimeMillis()
-        lastFullScreenAdTimestamp = now
-        fullScreenAdTimestamps.add(now)
-    }
+    private var appOpenResumeCount = 0 // Used for skip-1 logic
     
 
     // --- AdRequest builder honoring consent
@@ -286,12 +271,23 @@ object AdManager {
         val activity = currentActivity() ?: run { onDismiss(); return }
         val ad = appOpenAd ?: run { onDismiss(); return }
 
+        if (appOpenShownThisColdStart) {
+            // After cold start, we use skip-1 logic for resumes
+            appOpenResumeCount++
+            if (appOpenResumeCount % 2 == 0) {
+                // Even count -> Skip
+                Logger.d(TAG, "App open ad skipped (skip-1 logic, resume #$appOpenResumeCount)")
+                onDismiss()
+                return
+            }
+            Logger.d(TAG, "App open ad showing (skip-1 logic, resume #$appOpenResumeCount)")
+        } else {
+            Logger.d(TAG, "App open ad showing (cold start)")
+        }
+
         isAdShowing = true
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
             override fun onAdShowedFullScreenContent() {
-                // Record timestamp immediately when the ad becomes visible so rate
-                // limits account for actual impressions rather than dismissals.
-                recordFullScreenAdShown()
             }
             override fun onAdDismissedFullScreenContent() {
                 isAdShowing = false
@@ -356,7 +352,6 @@ object AdManager {
         isAdShowing = true
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
             override fun onAdShowedFullScreenContent() {
-                recordFullScreenAdShown()
             }
             override fun onAdDismissedFullScreenContent() {
                 isAdShowing = false
@@ -421,7 +416,6 @@ object AdManager {
         var isRewardEarned = false
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
             override fun onAdShowedFullScreenContent() {
-                recordFullScreenAdShown()
             }
             override fun onAdDismissedFullScreenContent() {
                 isAdShowing = false

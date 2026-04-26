@@ -191,9 +191,6 @@ class MainActivity : ComponentActivity() {
         // Initialize AdMob SDK
         AdManager.initialize(this)
 
-        // Show App Open ad on cold start (compliant launch monetization)
-        AdManager.showAppOpenAdIfAvailable()
-        
         // Automated Surgical Scan on Launch
         if (viewModel.scanOnLaunch.value && viewModel.hasAllFilesAccess()) {
             viewModel.startDeepClean()
@@ -1162,9 +1159,13 @@ fun UninstallerApp(
         )
     }
 
-    BackHandler(enabled = currentScreen != "home") {
+    val navigateHome = {
         if (currentScreen == "settings") AdManager.onNavigatedHomeFromSettings()
         currentScreen = "home"
+    }
+
+    BackHandler(enabled = currentScreen != "home") {
+        navigateHome()
     }
 
     Scaffold(
@@ -1198,12 +1199,8 @@ fun UninstallerApp(
                     isDarkTheme = isDarkTheme,
                     onThemeToggle = onThemeToggle,
                     onSettingsClick = {
-                        if (currentScreen == "settings") AdManager.onNavigatedHomeFromSettings()
-                        currentScreen = when (currentScreen) {
-                            "home" -> "settings"
-                            "history" -> "home"
-                            else -> "home"
-                        }
+                        if (currentScreen == "settings") navigateHome()
+                        else currentScreen = "settings"
                     },
                     showSettings = currentScreen == "home",
                     // Home: Refresh + History | Settings: Share + History | History: Refresh + Settings
@@ -2464,7 +2461,7 @@ fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, on
                 Spacer(modifier = Modifier.height(16.dp))
                 TextButton(onClick = {
                     onCancel()
-                    AdManager.onCleanFinishedCancel()
+                    // Ad trigger removed per policy (no ads on discard/cancel)
                 }) {
                     Text("DISCARD", color = Color.Gray.copy(alpha = 0.6f), fontWeight = FontWeight.Bold)
                 }
