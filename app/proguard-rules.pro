@@ -66,5 +66,7 @@
 
 # Google Mobile Ads (AdMob) — required to prevent stripping in release builds
 -keep class com.google.android.gms.ads.** { *; }
+-keep class com.google.android.ump.** { *; }
 -keep class com.google.android.gms.common.** { *; }
 -dontwarn com.google.android.gms.**
+-dontwarn com.google.android.ump.**

@@ -74,4 +74,8 @@ dependencies {
     // App Updates & Reviews
     implementation(libs.play.app.update)
     implementation(libs.play.review)
+
+    // AdMob & UMP
+    implementation("com.google.android.gms:play-services-ads:23.6.0")
+    implementation("com.google.android.ump:user-messaging-platform:3.1.0")
 }

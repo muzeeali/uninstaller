@@ -100,6 +100,7 @@ class MainActivity : ComponentActivity() {
     private var pendingHistoryApp: AppInfo? = null
     lateinit var updateManager: UpdateManager
     lateinit var ratingManager: RatingManager
+    lateinit var adManager: AdManager
     private var showRatingDialog by mutableStateOf(false)
 
 
@@ -149,6 +150,11 @@ class MainActivity : ComponentActivity() {
         ratingManager = RatingManager(this)
         ratingManager.initializeFirstLaunch()
 
+        adManager = AdManager(application, this)
+        adManager.initialize {
+            // Ads are ready
+        }
+
         val filter = IntentFilter(Intent.ACTION_PACKAGE_REMOVED).apply {
             addDataScheme("package")
         }
@@ -165,6 +171,9 @@ class MainActivity : ComponentActivity() {
                 viewModel.refreshHistory()
                 // Wait for the ad to be dismissed or failed before showing the rating prompt
                 if (!appLifecycleFirstStart) {
+                    if (adManager.appOpenEnabled) {
+                        adManager.appOpenAdManager.showAdIfAvailable(this@MainActivity)
+                    }
                     showForegroundRatingPrompt()
                 }
                 appLifecycleFirstStart = false
@@ -230,6 +239,7 @@ class MainActivity : ComponentActivity() {
                     UninstallerApp(
                         viewModel = viewModel,
                         ratingManager = ratingManager,
+                        adManager = adManager,
                         isDarkTheme = darkTheme,
                         onThemeToggle = { darkTheme = !darkTheme },
                         onUninstallRequest = { app ->
@@ -1033,6 +1043,7 @@ data class HistoryAppRecord(
 fun UninstallerApp(
     viewModel: AppViewModel,
     ratingManager: RatingManager,
+    adManager: AdManager,
     isDarkTheme: Boolean,
     onThemeToggle: () -> Unit,
     onUninstallRequest: (AppInfo) -> Unit,
@@ -1200,6 +1211,21 @@ fun UninstallerApp(
                     }} else null
                 )
             }
+        },
+        bottomBar = {
+            val showBanner = adManager.bannerEnabled &&
+                currentUiState !is AppUiState.Scanning &&
+                currentUiState !is AppUiState.CleanSummary &&
+                currentUiState !is AppUiState.CleanFinished
+            
+            if (showBanner) {
+                BannerAdView(
+                    adUnitId = BANNER_AD_UNIT_ID,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                )
+            }
         }
     ) { innerPadding ->
         Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
@@ -1230,6 +1256,7 @@ fun UninstallerApp(
 
                     if (currentScreen == "home") {
                         HomeScreen(
+                            adManager = adManager,
                             apps = state.apps,
                             storage = state.storage,
                             cachedIcons = cachedIcons,
@@ -1439,6 +1466,7 @@ fun Context.findActivity(): Activity? {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
+    adManager: AdManager,
     apps: List<AppInfo>, 
     storage: StorageInfo,
     cachedIcons: Set<String>,
@@ -1461,6 +1489,7 @@ fun HomeScreen(
     val pagerState = rememberPagerState(pageCount = { 2 })
     var previousPage by remember { mutableIntStateOf(0) }
     val coroutineScope = rememberCoroutineScope()
+    var isRewardedUnlocked by remember { mutableStateOf(!adManager.rewardedEnabled) }
     
     LaunchedEffect(pagerState.currentPage) {
         if (pagerState.currentPage != previousPage) {
@@ -1780,32 +1809,48 @@ fun HomeScreen(
         if (selectedApps.isNotEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
                 val currentVisibleApps = if (pagerState.currentPage == 0) userApps else systemApps
+                val activity = context.findActivity()
                 BulkActionBar(
                     count = selectedApps.size,
                     reclaimedSpace = formatSize(selectedApps.sumOf { it.sizeBytes }),
-                    isAdUnlocked = true,
+                    isAdUnlocked = isRewardedUnlocked,
                     onUninstall = {
-                        val appsToUninstall = selectedApps.toList()
-                        if (appsToUninstall.size == 1) {
-                            val action = {
-                                onUninstallRequest(appsToUninstall.first())
-                                selectedApps.clear()
-                                onSelectionChanged(0)
-                            }
-                            action()
-                        } else {
-                            onBulkUninstall(appsToUninstall) {
-                                appsToUninstall.forEach { 
-                                    try {
-                                        val intent = Intent(Intent.ACTION_DELETE).apply {
-                                            data = Uri.parse("package:${it.packageName}")
-                                        }
-                                        context.startActivity(intent)
-                                    } catch (e: Exception) {}
+                        val doUninstallLocal = {
+                            val appsToUninstall = selectedApps.toList()
+                            if (appsToUninstall.size == 1) {
+                                val action = {
+                                    onUninstallRequest(appsToUninstall.first())
+                                    selectedApps.clear()
+                                    onSelectionChanged(0)
                                 }
-                                selectedApps.clear()
-                                onSelectionChanged(0)
+                                action()
+                            } else {
+                                onBulkUninstall(appsToUninstall) {
+                                    appsToUninstall.forEach { 
+                                        try {
+                                            val intent = Intent(Intent.ACTION_DELETE).apply {
+                                                data = Uri.parse("package:${it.packageName}")
+                                            }
+                                            context.startActivity(intent)
+                                        } catch (e: Exception) {}
+                                    }
+                                    selectedApps.clear()
+                                    onSelectionChanged(0)
+                                }
                             }
+                        }
+
+                        if (isRewardedUnlocked || activity == null) {
+                            doUninstallLocal()
+                        } else {
+                            adManager.rewardedAdManager.showRewardedAd(
+                                activity = activity,
+                                onRewarded = {
+                                    isRewardedUnlocked = true
+                                    doUninstallLocal()
+                                },
+                                onDismissed = { /* remain locked */ }
+                            )
                         }
                     },
                     onSelectAll = {
