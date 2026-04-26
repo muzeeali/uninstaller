@@ -27,6 +27,9 @@ import com.google.android.ump.ConsentForm
 import com.google.android.ump.ConsentInformation
 import com.google.android.ump.ConsentRequestParameters
 import com.google.android.ump.UserMessagingPlatform
+import com.google.firebase.Firebase
+import com.google.firebase.remoteconfig.remoteConfig
+import com.google.firebase.remoteconfig.remoteConfigSettings
 
 private const val TAG = "AdManager"
 
@@ -96,10 +99,21 @@ object AdManager {
 
     // No critical-flow suppression — event-based throttle controls shows
 
+    // Remote Config flags
+    private var adsEnabled = true
+    private var bannerAdsEnabled = true
+    private var interstitialAdsEnabled = true
+    private var rewardedAdsEnabled = true
+    private var appOpenAdsEnabled = true
+
     // Initialize and preload
     fun initialize(activity: Activity) {
         appCtx = activity.applicationContext
         bindActivity(activity)
+        
+        // Initialize Remote Config
+        fetchRemoteConfig()
+
         // Mark that we want to show an App Open on this cold start when it's available
         pendingShowAppOpenOnLoad = true
         MobileAds.initialize(activity.applicationContext) {
@@ -110,6 +124,36 @@ object AdManager {
                 loadRewarded()
                 loadAppOpen()
             }
+        }
+    }
+
+    private fun fetchRemoteConfig() {
+        try {
+            val remoteConfig = com.google.firebase.Firebase.remoteConfig
+            val configSettings = remoteConfigSettings {
+                minimumFetchIntervalInSeconds = if (BuildConfig.DEBUG) 0 else 3600
+            }
+            remoteConfig.setConfigSettingsAsync(configSettings)
+            remoteConfig.setDefaultsAsync(mapOf(
+                "ads_enabled" to true,
+                "banner_ads_enabled" to true,
+                "interstitial_ads_enabled" to true,
+                "rewarded_ads_enabled" to true,
+                "app_open_ads_enabled" to true
+            ))
+
+            remoteConfig.fetchAndActivate().addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    adsEnabled = remoteConfig.getBoolean("ads_enabled")
+                    bannerAdsEnabled = remoteConfig.getBoolean("banner_ads_enabled")
+                    interstitialAdsEnabled = remoteConfig.getBoolean("interstitial_ads_enabled")
+                    rewardedAdsEnabled = remoteConfig.getBoolean("rewarded_ads_enabled")
+                    appOpenAdsEnabled = remoteConfig.getBoolean("app_open_ads_enabled")
+                    Logger.d(TAG, "Remote Config updated: adsEnabled=$adsEnabled")
+                }
+            }
+        } catch (e: Exception) {
+            Logger.w(TAG, "Remote Config initialization failed: ${e.message}")
         }
     }
 
@@ -160,6 +204,7 @@ object AdManager {
 
     // --- Helpers: cooldown enforcement
     private fun canShowFullScreen(): Boolean {
+        if (!adsEnabled) return false
         if (DEBUG_SUPPRESS_ADS) return false
         if (isAdShowing) return false
         
@@ -203,6 +248,7 @@ object AdManager {
     // --- App Open
     private fun loadAppOpen() {
         val ctx = appCtx ?: return
+        if (!adsEnabled || !appOpenAdsEnabled) return
         if (appOpenAd != null || appOpenAdLoading) return
         appOpenAdLoading = true
         AppOpenAd.load(
@@ -267,6 +313,7 @@ object AdManager {
     // --- Interstitial
     private fun loadInterstitial() {
         val ctx = appCtx ?: return
+        if (!adsEnabled || !interstitialAdsEnabled) return
         if (interstitialAd != null || interstitialLoading) return
         interstitialLoading = true
         InterstitialAd.load(
@@ -288,6 +335,7 @@ object AdManager {
     }
 
     fun showInterstitial(onDismiss: () -> Unit = {}) {
+        if (!adsEnabled || !interstitialAdsEnabled) { onDismiss(); return }
         if (DEBUG_SUPPRESS_ADS) { onDismiss(); return }
         val activity = currentActivity() ?: run { onDismiss(); return }
 
@@ -328,6 +376,7 @@ object AdManager {
     // --- Rewarded
     private fun loadRewarded() {
         val ctx = appCtx ?: return
+        if (!adsEnabled || !rewardedAdsEnabled) return
         if (rewardedAd != null || rewardedLoading) return
         rewardedLoading = true
         RewardedAd.load(
@@ -351,6 +400,10 @@ object AdManager {
     }
 
     fun showRewarded(onRewardEarned: () -> Unit, onDismiss: () -> Unit = {}) {
+        if (!adsEnabled || !rewardedAdsEnabled) {
+            onRewardEarned()
+            return
+        }
         if (DEBUG_SUPPRESS_ADS) {
             rewardedUnlockActive = true
             onRewardEarned()
@@ -398,7 +451,11 @@ object AdManager {
         context: Context,
         onLoaded: () -> Unit = {},
         onFailed: () -> Unit = {}
-    ): AdView {
+    ): AdView? {
+        if (!adsEnabled || !bannerAdsEnabled) {
+            onFailed()
+            return null
+        }
         val adView = AdView(context).apply {
             val displayMetrics = context.resources.displayMetrics
             val adWidth = (displayMetrics.widthPixels / displayMetrics.density).toInt()
