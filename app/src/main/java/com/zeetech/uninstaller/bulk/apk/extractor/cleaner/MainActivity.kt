@@ -1389,43 +1389,54 @@ fun UninstallerTopBar(
     onSettingsNav: (() -> Unit)? = null,
     onHistory: (() -> Unit)? = null
 ) {
+    @OptIn(ExperimentalMaterial3Api::class)
     CenterAlignedTopAppBar(
         navigationIcon = {
-            Row {
-                if (onRefresh != null) {
-                    IconButton(onClick = onRefresh) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = stringResource(R.string.content_refresh),
-                            tint = EmeraldGreen
-                        )
+            CompositionLocalProvider(LocalMinimumInteractiveComponentEnforcement provides false) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy((-2).dp),
+                    modifier = Modifier.padding(start = 4.dp)
+                ) {
+                    if (onRefresh != null) {
+                        IconButton(onClick = onRefresh) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = stringResource(R.string.content_refresh),
+                                tint = EmeraldGreen,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
-                }
-                if (onShareApp != null) {
-                    IconButton(onClick = onShareApp) {
-                        Icon(
-                            imageVector = Icons.Default.Share,
-                            contentDescription = stringResource(R.string.item_share),
-                            tint = EmeraldGreen
-                        )
+                    if (onHistory != null) {
+                        IconButton(onClick = onHistory) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_history),
+                                contentDescription = "History",
+                                tint = EmeraldGreen,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
-                }
-                if (onSettingsNav != null) {
-                    IconButton(onClick = onSettingsNav) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Settings",
-                            tint = EmeraldGreen
-                        )
+                    if (onShareApp != null) {
+                        IconButton(onClick = onShareApp) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = stringResource(R.string.item_share),
+                                tint = EmeraldGreen,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
-                }
-                if (onHistory != null) {
-                    IconButton(onClick = onHistory) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_history),
-                            contentDescription = "History",
-                            tint = EmeraldGreen
-                        )
+                    if (onSettingsNav != null) {
+                        IconButton(onClick = onSettingsNav) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Settings",
+                                tint = EmeraldGreen,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -1434,20 +1445,20 @@ fun UninstallerTopBar(
             when (title) {
                 "UNINSTALLER" -> {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("ZEE ", fontSize = 18.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.5.sp)
-                        Text("UNINSTALLER", fontSize = 18.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.5.sp)
+                        Text("ZEE ", fontSize = 17.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.2.sp)
+                        Text("UNINSTALLER", fontSize = 17.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.2.sp)
                     }
                 }
                 "SETTINGS" -> {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("ZEE ", fontSize = 18.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.5.sp)
-                        Text("SETTINGS", fontSize = 18.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.5.sp)
+                        Text("ZEE ", fontSize = 17.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.2.sp)
+                        Text("SETTINGS", fontSize = 17.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.2.sp)
                     }
                 }
                 "HISTORY" -> {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("ZEE ", fontSize = 18.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.5.sp)
-                        Text("HISTORY", fontSize = 18.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.5.sp)
+                        Text("ZEE ", fontSize = 17.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.2.sp)
+                        Text("HISTORY", fontSize = 17.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.2.sp)
                     }
                 }
                 else -> {
@@ -1456,20 +1467,29 @@ fun UninstallerTopBar(
             }
         },
         actions = {
-            IconButton(onClick = onThemeToggle) {
-                Icon(
-                    painter = painterResource(id = if (isDarkTheme) R.drawable.ic_light_mode else R.drawable.ic_dark_mode),
-                    contentDescription = stringResource(R.string.content_toggle_theme),
-                    tint = if (isDarkTheme) EmeraldGreen else LogoPurple,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-            IconButton(onClick = onSettingsClick) {
-                Icon(
-                    imageVector = if (!showSettings) Icons.Default.Home else Icons.Default.Settings,
-                    contentDescription = stringResource(R.string.content_navigate),
-                    tint = LogoPurple
-                )
+            CompositionLocalProvider(LocalMinimumInteractiveComponentEnforcement provides false) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy((-2).dp),
+                    modifier = Modifier.padding(end = 4.dp)
+                ) {
+                    IconButton(onClick = onThemeToggle) {
+                        Icon(
+                            painter = painterResource(id = if (isDarkTheme) R.drawable.ic_light_mode else R.drawable.ic_dark_mode),
+                            contentDescription = stringResource(R.string.content_toggle_theme),
+                            tint = if (isDarkTheme) EmeraldGreen else LogoPurple,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    IconButton(onClick = onSettingsClick) {
+                        Icon(
+                            imageVector = if (!showSettings) Icons.Default.Home else Icons.Default.Settings,
+                            contentDescription = stringResource(R.string.content_navigate),
+                            tint = LogoPurple,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
             }
         },
         colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent)
