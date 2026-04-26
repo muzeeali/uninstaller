@@ -1,32 +1,43 @@
-# Uninstaller: APK Extractor
+# Uninstaller: APK Extractor & Surgical Cleaner
 
-A powerful, SEO-optimized Android utility for bulk uninstallation, APK extraction, and surgical junk cleaning.
+A powerful, premium-grade Android utility designed for efficiency, performance, and modern aesthetics. Bulk uninstall apps, extract APKs (including App Bundles), and perform deep surgical cleaning with a state-of-the-art Jetpack Compose interface.
 
-## 🚀 Features
+## 🚀 Key Features
 
-- **Bulk Uninstaller:** Quickly select and remove multiple apps in one go.
-- **APK Extractor:** Backup your installed apps (including Split APKs/App Bundles) to your storage.
-- **Surgical Cleaner:** Deep scan and remove leftover files from uninstalled apps and system junk.
-- **Storage Analytics:** Real-time visualization of your device's free space.
-- **Optimized Performance:** Batched loading system to handle devices with 400+ apps without crashing.
+- **Bulk Uninstaller:** Parallelized intent handling for fast, reliable multi-app removal.
+- **APK Extractor:** Backup installed apps (Base and Split APKs) directly to your local storage.
+- **Surgical Cleaner:** Advanced scanning algorithm to identify and purge deep-seated junk and leftover app data.
+- **Modern UI/UX:** Premium design with glassmorphism effects, smooth animations, and a dynamic compact TopBar optimized for narrow mobile screens.
+- **Adaptive Layouts:** Fully optimized for both Portrait and Landscape orientations with intelligent column-weighting and scaled UI elements.
+- **Storage Analytics:** Real-time visual feedback on storage consumption and cleanup impact.
 
-## 🛠️ Technical Details
+## 🛠️ Technical Specifications
 
-- **Version:** `1.0.1` (Build 2)
-- **Package ID:** `com.zeetech.uninstaller.bulk.apk.extractor.cleaner`
-- **Language:** Kotlin / Jetpack Compose
-- **Architecture:** MVVM (Model-View-ViewModel)
-- **Minimum SDK:** Android 7.0 (API 24)
-- **Target SDK:** Android 15 (API 35)
+- **Version:** `1.1.0` (Build 9)
+- **Framework:** 100% Jetpack Compose / Kotlin Coroutines
+- **Monetization:** Optimized AdMob integration featuring:
+    - **Skip-1 App Open Logic:** Intelligent ad-display frequency to balance UX and revenue.
+    - **Category-Based Interstitials:** Policy-compliant triggers based on user action thresholds (e.g., 3 uninstalls or 1 refresh).
+    - **Policy Compliance:** Built-in safeguards against "ads on negative actions" and deceptive triggers.
+- **Min SDK:** API 24 (Android 7.0)
+- **Target SDK:** API 35 (Android 15)
 
-## 📦 How to Build
+## 🎨 Design System
 
-1. Open the project in Android Studio.
-2. Let Gradle sync and download dependencies.
-3. Run `assembleRelease` to generate the production APK.
+The application uses a custom-tailored design system focused on **Visual Excellence**:
+- **Color Palette:** Sleek "LogoPurple" and "EmeraldGreen" curated for high contrast and premium feel.
+- **Compact Header:** A customized `CenterAlignedTopAppBar` using `LocalMinimumInteractiveComponentEnforcement` to maximize horizontal space for screen titles.
+- **Responsive Elements:** Icons and spacers scale dynamically based on device orientation and screen width.
 
-## 🔒 Privacy & Safety
+## 📦 Building the Project
 
-- No personal data is collected or shared.
-- Requires "All Files Access" for deep cleaning functionality (Android 11+).
-- Secure and lightweight.
+1. Clone the repository.
+2. Open in **Android Studio Koala** or later.
+3. Ensure you have the `google-services.json` file in the `app/` directory.
+4. Run `./gradlew assembleDebug` for testing or `assembleRelease` for production.
+
+## 🔒 Privacy & Compliance
+
+- **No Data Collection:** The app operates strictly locally; no user data is uploaded to external servers.
+- **Scoped Storage:** Uses the latest Android storage APIs for maximum security.
+- **Play Console Ready:** All ad implementations and UI flows are audited for Google Play Policy compliance.
