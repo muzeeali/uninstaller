@@ -70,7 +70,7 @@ object AdManager {
     private var pendingShowAppOpenOnLoad = false
     // If true, allow showing App Open on every foreground resume (not just once per cold start)
     // Set to false to avoid showing App Open on every resume; prefer cold-start only.
-    var appOpenShowEveryResume: Boolean = false
+    var appOpenShowEveryResume: Boolean = true
     // Tracks whether the application lifecycle onStart has run at least once.
     // Used by MainActivity to decide first-start behavior across Activity recreations.
     var appLifecycleFirstStart = true
@@ -280,9 +280,10 @@ object AdManager {
     }
 
     fun showAppOpenAdIfAvailable(onDismiss: () -> Unit = {}) {
+        if (!adsEnabled || !appOpenAdsEnabled) { onDismiss(); return }
         if (DEBUG_SUPPRESS_ADS) { onDismiss(); return }
-        if (!appOpenShowEveryResume && appOpenShownThisColdStart) { onDismiss(); return }
-        if (!canShowFullScreen()) { onDismiss(); return }
+        if (isAdShowing) { onDismiss(); return }
+        
         val activity = currentActivity() ?: run { onDismiss(); return }
         val ad = appOpenAd ?: run { onDismiss(); return }
 
