@@ -98,6 +98,12 @@ import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
 import android.view.ViewGroup
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.window.Dialog
+import com.zeetech.uninstaller.bulk.apk.extractor.cleaner.ui.theme.PremiumGold
+import com.zeetech.uninstaller.bulk.apk.extractor.cleaner.ui.theme.PremiumCardBg
+import com.zeetech.uninstaller.bulk.apk.extractor.cleaner.ui.theme.DarkBackground
 import com.google.android.play.core.install.model.ActivityResult
 
 class MainActivity : ComponentActivity() {
@@ -156,8 +162,11 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen()
+        val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
+        
+        AdManager.initialize(this)
+        BillingManager.initialize(this)
         viewModel = ViewModelProvider(this)[AppViewModel::class.java]
 
         // Initialize Update Manager
@@ -179,18 +188,39 @@ class MainActivity : ComponentActivity() {
             override fun onStart(owner: LifecycleOwner) {
                 // Auto-refresh lists and detect uninstalled apps on resume
                 viewModel.refreshHistory()
-                // Wait for the ad to be dismissed or failed before showing the rating prompt
-                AdManager.showAppOpenAdIfAvailable {
-                    if (!AdManager.appLifecycleFirstStart) {
-                        showForegroundRatingPrompt()
+                
+                lifecycleScope.launch {
+                    // Only run if ad isn't already showing
+                    if (AdManager.isAdShowing()) return@launch
+
+                    // Cold Start Sequence: Wait for Ad -> Show Ad -> Show Paywall
+                    if (AdManager.appLifecycleFirstStart) {
+                        var timeout = 0
+                        while (!AdManager.isAppOpenReady() && timeout < 50) { // Wait up to 5 seconds
+                            delay(100)
+                            timeout++
+                        }
                     }
-                    AdManager.appLifecycleFirstStart = false
+                    
+                    AdManager.showAppOpenAdIfAvailable {
+                        if (AdManager.appLifecycleFirstStart) {
+                            // Cold Start: Trigger Paywall after ad dismissal
+                            lifecycleScope.launch {
+                                delay(600) // Slightly longer delay for safety
+                                viewModel.triggerPaywall()
+                            }
+                        } else {
+                            // Resume: Show rating prompt
+                            showForegroundRatingPrompt()
+                        }
+                        AdManager.appLifecycleFirstStart = false
+                    }
                 }
             }
         })
 
-        // Initialize AdMob SDK
-        AdManager.initialize(this)
+        // Initialize Update Manager
+        updateManager = UpdateManager(this)
 
         // Automated Surgical Scan on Launch
         if (viewModel.scanOnLaunch.value && viewModel.hasAllFilesAccess()) {
@@ -405,10 +435,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (enabled) StorageAlertWorker.schedule(ctx) else StorageAlertWorker.cancel(ctx)
     }
 
+    private val _triggerPaywallSignal = MutableStateFlow(false)
+    val triggerPaywallSignal: StateFlow<Boolean> = _triggerPaywallSignal
+    fun triggerPaywall() { _triggerPaywallSignal.value = true }
+    fun consumePaywallTrigger() { _triggerPaywallSignal.value = false }
+
     val appVersionName: String = try {
         val pInfo = application.packageManager.getPackageInfo(application.packageName, 0)
         pInfo.versionName ?: "1.1.0"
     } catch (e: Exception) { "1.1.0" }
+
+    val appVersionCode: Int = try {
+        val pInfo = application.packageManager.getPackageInfo(application.packageName, 0)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            pInfo.longVersionCode.toInt()
+        } else {
+            pInfo.versionCode
+        }
+    } catch (e: Exception) { 1 }
 
     private var discoveredJunk = listOf<File>()
 
@@ -1052,6 +1096,248 @@ data class HistoryAppRecord(
     val timestamp: Long
 )
 
+@Composable
+fun PaywallScreen(
+    onDismiss: () -> Unit,
+    onPurchaseSuccess: () -> Unit
+) {
+    val context = LocalContext.current
+    val activity = context.findActivity() as? Activity
+    var selectedPlanId by rememberSaveable { mutableStateOf(BillingManager.PRODUCT_YEARLY) }
+    val isPremium by BillingManager.isPremium.collectAsState()
+
+    LaunchedEffect(isPremium) {
+        if (isPremium) onPurchaseSuccess()
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = DarkBackground
+        ) {
+            Box(modifier = Modifier.fillMaxSize().background(
+                Brush.verticalGradient(listOf(DarkBackground, Charcoal))
+            )) {
+                // Background Glow
+                Box(modifier = Modifier
+                    .size(300.dp)
+                    .align(Alignment.TopCenter)
+                    .graphicsLayer(translationY = -150f)
+                    .background(Brush.radialGradient(listOf(LogoPurple.copy(alpha = 0.15f), Color.Transparent)))
+                )
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .statusBarsPadding()
+                        .navigationBarsPadding()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    // Header with Close
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.Default.Close, null, tint = Color.White.copy(alpha = 0.5f))
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    // App Logo + Crown
+                    Box(contentAlignment = Alignment.BottomEnd) {
+                        Surface(
+                            modifier = Modifier.size(80.dp),
+                            shape = RoundedCornerShape(20.dp),
+                            color = Charcoal,
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
+                        ) {
+                            Image(
+                                painter = painterResource(id = R.mipmap.ic_launcher_foreground),
+                                contentDescription = null,
+                                modifier = Modifier.padding(8.dp)
+                            )
+                        }
+                        Surface(
+                            color = PremiumGold,
+                            shape = CircleShape,
+                            modifier = Modifier.offset(x = 8.dp, y = 8.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Star, 
+                                null, 
+                                tint = DarkBackground, 
+                                modifier = Modifier.padding(4.dp).size(16.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = stringResource(R.string.paywall_title),
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Black,
+                        color = Color.White
+                    )
+                    Text(
+                        text = stringResource(R.string.paywall_subtitle),
+                        fontSize = 14.sp,
+                        color = Color.Gray
+                    )
+
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        PaywallFeatureItem(stringResource(R.string.paywall_feature_ads))
+                        PaywallFeatureItem(stringResource(R.string.paywall_feature_history))
+                        PaywallFeatureItem(stringResource(R.string.paywall_feature_future))
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PaywallPlanCard(
+                            id = BillingManager.PRODUCT_MONTHLY,
+                            name = stringResource(R.string.paywall_plan_monthly),
+                            price = "$2.99",
+                            period = stringResource(R.string.paywall_per_month),
+                            selected = selectedPlanId == BillingManager.PRODUCT_MONTHLY,
+                            onClick = { selectedPlanId = BillingManager.PRODUCT_MONTHLY }
+                        )
+                        PaywallPlanCard(
+                            id = BillingManager.PRODUCT_YEARLY,
+                            name = stringResource(R.string.paywall_plan_yearly),
+                            price = "$19.99",
+                            period = stringResource(R.string.paywall_per_year),
+                            badge = stringResource(R.string.paywall_badge_yearly),
+                            selected = selectedPlanId == BillingManager.PRODUCT_YEARLY,
+                            onClick = { selectedPlanId = BillingManager.PRODUCT_YEARLY }
+                        )
+                        PaywallPlanCard(
+                            id = BillingManager.PRODUCT_LIFETIME,
+                            name = stringResource(R.string.paywall_plan_lifetime),
+                            price = "$49.99",
+                            period = stringResource(R.string.paywall_one_time),
+                            badge = stringResource(R.string.paywall_badge_lifetime),
+                            selected = selectedPlanId == BillingManager.PRODUCT_LIFETIME,
+                            onClick = { selectedPlanId = BillingManager.PRODUCT_LIFETIME }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    Button(
+                        onClick = { 
+                            activity?.let { BillingManager.launchPurchase(it, selectedPlanId) }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Text(stringResource(R.string.paywall_action_subscribe), fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = stringResource(R.string.paywall_action_restore),
+                            fontSize = 12.sp,
+                            color = EmeraldGreen,
+                            modifier = Modifier.clickable { BillingManager.restorePurchases() }
+                        )
+                    }
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Text(
+                        text = stringResource(R.string.paywall_footer_note),
+                        fontSize = 10.sp,
+                        color = Color.Gray.copy(alpha = 0.5f),
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PaywallFeatureItem(text: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Default.CheckCircle, null, tint = EmeraldGreen, modifier = Modifier.size(20.dp))
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(text = text, color = Color.White, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+fun PaywallPlanCard(
+    id: String,
+    name: String,
+    price: String,
+    period: String,
+    badge: String? = null,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() },
+        shape = RoundedCornerShape(16.dp),
+        color = if (selected) EmeraldGreen.copy(alpha = 0.1f) else Charcoal.copy(alpha = 0.5f),
+        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) EmeraldGreen else Color.White.copy(alpha = 0.1f))
+    ) {
+        Row(
+            modifier = Modifier.padding(vertical = 12.dp, horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            RadioButton(
+                selected = selected,
+                onClick = onClick,
+                colors = RadioButtonDefaults.colors(selectedColor = EmeraldGreen, unselectedColor = Color.Gray)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(text = name, fontWeight = FontWeight.Bold, color = Color.White)
+                    if (badge != null) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            color = if (id == BillingManager.PRODUCT_LIFETIME) PremiumGold else EmeraldGreen,
+                            shape = RoundedCornerShape(4.dp)
+                        ) {
+                            Text(
+                                text = badge,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Black,
+                                color = DarkBackground,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+            }
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(text = price, fontWeight = FontWeight.Black, fontSize = 18.sp, color = Color.White)
+                Text(text = period, fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(bottom = 2.dp))
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UninstallerApp(
@@ -1064,11 +1350,40 @@ fun UninstallerApp(
 ) {
     var currentScreen by rememberSaveable { mutableStateOf("home") }
     var prevScreen by rememberSaveable { mutableStateOf("home") }
+    var showPaywall by rememberSaveable { mutableStateOf(false) }
+    var paywallSource by rememberSaveable { mutableStateOf("") } // "launch", "history", "settings"
+    val isPremium by BillingManager.isPremium.collectAsState()
     val currentUiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() as? MainActivity }
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     
+    // ── Launch Paywall Logic ──────────────────────────────────────────────────
+    val triggerSignal by viewModel.triggerPaywallSignal.collectAsState()
+    
+    LaunchedEffect(triggerSignal, isPremium) {
+        if (triggerSignal && !isPremium) {
+            val prefs = context.getSharedPreferences("surgical_uninstaller_prefs", Context.MODE_PRIVATE)
+            val lastShownDate = prefs.getString("paywall_last_shown_date", "") ?: ""
+            val lastVersion = prefs.getInt("paywall_last_version", 0)
+            val currentVersion = viewModel.appVersionCode
+            
+            val calendar = java.util.Calendar.getInstance()
+            val today = "${calendar.get(java.util.Calendar.YEAR)}-${calendar.get(java.util.Calendar.MONTH)}-${calendar.get(java.util.Calendar.DAY_OF_MONTH)}"
+
+            val isFirstInstall = lastShownDate.isEmpty()
+            val isUpdate = lastVersion != 0 && lastVersion < currentVersion
+            val isNewDay = lastShownDate != today
+
+            if (isFirstInstall || isUpdate || isNewDay) {
+                paywallSource = "launch"
+                showPaywall = true
+                prefs.edit().putInt("paywall_last_version", currentVersion).apply()
+            }
+            viewModel.consumePaywallTrigger()
+        }
+    }
+
     // ── Update System States ────────────────────────────────────────────────
     var showUpdateDialog by remember { mutableStateOf(false) }
     var updateUrl by remember { mutableStateOf("") }
@@ -1086,6 +1401,7 @@ fun UninstallerApp(
                 showUpdateDialog = true
             }
         )
+
     }
 
     // ── Ad triggers on screen transitions ───────────────────────────────────
@@ -1094,71 +1410,7 @@ fun UninstallerApp(
 
 
     // ── Update Available Dialog (Fallback Path) ──────────────────────────────
-    if (showUpdateDialog) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showUpdateDialog = false },
-            containerColor = MaterialTheme.colorScheme.surface,
-            icon = {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    // Show App Logo
-                    coil.compose.AsyncImage(
-                        model = R.mipmap.ic_launcher_foreground,
-                        contentDescription = null,
-                        modifier = Modifier.size(64.dp).clip(RoundedCornerShape(12.dp))
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Icon(painter = painterResource(id = R.drawable.ic_system_update), null, tint = EmeraldGreen, modifier = Modifier.size(32.dp))
-                }
-            },
-            title = {
-                Text(
-                    if (isMandatoryUpdate) "Critical Update Required!" else "New Update Available!",
-                    fontWeight = FontWeight.Black,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            },
-            text = {
-                Text(
-                    if (isMandatoryUpdate) 
-                        "This version has critical improvements. You must update to the latest version to continue using the app."
-                    else 
-                        "A new version of Uninstaller is ready. Update now to get the latest features and security improvements.",
-                    textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val activity = context as? MainActivity
-                        activity?.updateManager?.launchUpdateUrl(activity, updateUrl)
-                        showUpdateDialog = false
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
-                ) {
-                    Text("UPDATE NOW", fontWeight = FontWeight.Black)
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { showUpdateDialog = false },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(if (isMandatoryUpdate) "REMIND ME LATER" else "LATER", color = Color.Gray, fontWeight = FontWeight.Bold)
-                }
-            },
-            shape = RoundedCornerShape(28.dp),
-            properties = DialogProperties(
-                usePlatformDefaultWidth = false,
-                dismissOnBackPress = true,
-                dismissOnClickOutside = true
-            ),
-            modifier = Modifier.padding(24.dp)
-        )
-    }
+
 
     val navigateHome = {
         if (currentScreen == "settings") AdManager.onNavigatedHomeFromSettings()
@@ -1224,9 +1476,16 @@ fun UninstallerApp(
                         context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.item_share)))
                     }} else null,
                     onSettingsNav = if (currentScreen == "history") {{ currentScreen = "settings" }} else null,
-                    onHistory = if (currentScreen != "history") {{
-                        currentScreen = "history"
-                    }} else null
+                    onHistory = if (currentScreen != "history") {
+                        {
+                            if (isPremium) {
+                                currentScreen = "history"
+                            } else {
+                                paywallSource = "history"
+                                showPaywall = true
+                            }
+                        }
+                    } else null
                 )
             }
         }
@@ -1325,10 +1584,103 @@ fun UninstallerApp(
                             onBack = { currentScreen = "home" }
                         )
                     } else {
-                        SettingsScreen(viewModel, ratingManager)
+                        SettingsScreen(
+                            viewModel = viewModel,
+                            ratingManager = ratingManager,
+                            onShowPaywall = {
+                                paywallSource = "settings"
+                                showPaywall = true
+                            }
+                        )
                     }
                 }
             }
+        }
+
+        // ── Overlay Dialogs ───────────────────────────────────────────────────
+        if (showUpdateDialog) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showUpdateDialog = false },
+                containerColor = MaterialTheme.colorScheme.surface,
+                icon = {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        coil.compose.AsyncImage(
+                            model = R.mipmap.ic_launcher_foreground,
+                            contentDescription = null,
+                            modifier = Modifier.size(64.dp).clip(RoundedCornerShape(12.dp))
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Icon(painter = painterResource(id = R.drawable.ic_system_update), null, tint = EmeraldGreen, modifier = Modifier.size(32.dp))
+                    }
+                },
+                title = {
+                    Text(
+                        if (isMandatoryUpdate) "Critical Update Required!" else "New Update Available!",
+                        fontWeight = FontWeight.Black,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                },
+                text = {
+                    Text(
+                        if (isMandatoryUpdate) 
+                            "This version has critical improvements. You must update to the latest version to continue using the app."
+                        else 
+                            "A new version of Uninstaller is ready. Update now to get the latest features and security improvements.",
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val activity = context as? MainActivity
+                            activity?.updateManager?.launchUpdateUrl(activity, updateUrl)
+                            showUpdateDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                    ) {
+                        Text("UPDATE NOW", fontWeight = FontWeight.Black)
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { showUpdateDialog = false },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (isMandatoryUpdate) "REMIND ME LATER" else "LATER", color = Color.Gray, fontWeight = FontWeight.Bold)
+                    }
+                },
+                shape = RoundedCornerShape(28.dp),
+                properties = DialogProperties(
+                    usePlatformDefaultWidth = false,
+                    dismissOnBackPress = true,
+                    dismissOnClickOutside = true
+                ),
+                modifier = Modifier.padding(24.dp)
+            )
+        }
+
+        if (showPaywall) {
+            PaywallScreen(
+                onDismiss = { 
+                    showPaywall = false
+                    val prefs = context.getSharedPreferences("surgical_uninstaller_prefs", Context.MODE_PRIVATE)
+                    val calendar = java.util.Calendar.getInstance()
+                    val today = "${calendar.get(java.util.Calendar.YEAR)}-${calendar.get(java.util.Calendar.MONTH)}-${calendar.get(java.util.Calendar.DAY_OF_MONTH)}"
+                    prefs.edit().putString("paywall_last_shown_date", today).apply()
+                },
+                onPurchaseSuccess = {
+                    showPaywall = false
+                    val prefs = context.getSharedPreferences("surgical_uninstaller_prefs", Context.MODE_PRIVATE)
+                    val calendar = java.util.Calendar.getInstance()
+                    val today = "${calendar.get(java.util.Calendar.YEAR)}-${calendar.get(java.util.Calendar.MONTH)}-${calendar.get(java.util.Calendar.DAY_OF_MONTH)}"
+                    prefs.edit().putString("paywall_last_shown_date", today).apply()
+                    if (paywallSource == "history") currentScreen = "history"
+                }
+            )
         }
     }
 }
@@ -2587,6 +2939,9 @@ fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, on
 // ─── Reusable Banner Ad Composable ──────────────────────────────────────────
 @Composable
 fun BannerAdView() {
+    val isPremium by BillingManager.isPremium.collectAsState()
+    if (isPremium) return
+
     val context = LocalContext.current
     // Use MaterialTheme colorScheme so banner label follows the app's theme toggle
     val contentColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -2724,7 +3079,12 @@ fun CleanFinishedScreen(onDone: () -> Unit) {
 }
 
 @Composable
-fun SettingsScreen(viewModel: AppViewModel, ratingManager: RatingManager) {
+fun SettingsScreen(
+    viewModel: AppViewModel, 
+    ratingManager: RatingManager,
+    onShowPaywall: () -> Unit
+) {
+    val isPremium by BillingManager.isPremium.collectAsState()
     val context = LocalContext.current
     val scanOnLaunch by viewModel.scanOnLaunch.collectAsState()
     val storageThreshold by viewModel.storageThreshold.collectAsState()
@@ -2767,26 +3127,107 @@ fun SettingsScreen(viewModel: AppViewModel, ratingManager: RatingManager) {
                 border = androidx.compose.foundation.BorderStroke(1.dp, EmeraldGreen.copy(alpha = 0.2f))
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
-                    Surface(
-                        shape = CircleShape, 
-                        color = Color.White.copy(alpha = 0.05f), 
-                        modifier = Modifier.padding(bottom = 16.dp).size(96.dp)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
                     ) {
-                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                            coil.compose.AsyncImage(
-                                model = R.mipmap.ic_launcher_foreground,
-                                contentDescription = null,
-                                modifier = Modifier.requiredSize(116.dp)
-                            )
+                        // Dummy Spacer to keep circle centered
+                        Spacer(modifier = Modifier.width(60.dp)) 
+
+                        // The Circle
+                        Surface(
+                            shape = CircleShape, 
+                            color = Color.White.copy(alpha = 0.05f), 
+                            modifier = Modifier.size(96.dp)
+                        ) {
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                coil.compose.AsyncImage(
+                                    model = R.mipmap.ic_launcher_foreground,
+                                    contentDescription = null,
+                                    modifier = Modifier.align(Alignment.Center).requiredSize(116.dp)
+                                )
+                            }
+                        }
+                        
+                        // Floating Badge on Right
+                        Surface(
+                            modifier = Modifier.offset(x = (-8).dp), // Slight overlap for appeal
+                            color = if (isPremium) PremiumGold else EmeraldGreen.copy(alpha = 0.1f),
+                            shape = CircleShape,
+                            border = BorderStroke(2.dp, MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (isPremium) {
+                                    Icon(Icons.Default.Star, null, tint = Color.Black, modifier = Modifier.size(10.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                }
+                                Text(
+                                    text = if (isPremium) stringResource(R.string.status_pro) else stringResource(R.string.status_free),
+                                    color = if (isPremium) Color.Black else EmeraldGreen,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Black
+                                )
+                            }
                         }
                     }
                     Row {
                         Text("ZEE ", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = LogoPurple)
                         Text("UNINSTALLER", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = EmeraldGreen)
                     }
+                    
+                    Spacer(modifier = Modifier.height(4.dp))
+                    
+
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(stringResource(R.string.subtitle_precision), fontStyle = androidx.compose.ui.text.font.FontStyle.Italic, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(modifier = Modifier.height(12.dp))
-                    Text("Version ${viewModel.appVersionName} • Zee Tech", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                    Text("${stringResource(R.string.info_version)} ${viewModel.appVersionName} • Zee Tech", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                }
+            }
+        }
+
+        if (!isPremium) {
+            item {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onShowPaywall() },
+                    color = PremiumCardBg,
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(1.dp, PremiumGold.copy(alpha = 0.2f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(18.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            modifier = Modifier.size(40.dp),
+                            shape = CircleShape,
+                            color = PremiumGold.copy(alpha = 0.15f)
+                        ) {
+                            Icon(
+                                Icons.Default.Star, 
+                                null, 
+                                tint = PremiumGold, 
+                                modifier = Modifier.padding(8.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.settings_premium_title), fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
+                            Text(stringResource(R.string.settings_premium_desc), fontSize = 12.sp, color = Color.Gray)
+                        }
+                        Icon(
+                            Icons.AutoMirrored.Filled.KeyboardArrowRight, 
+                            null, 
+                            tint = Color.Gray, 
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
         }

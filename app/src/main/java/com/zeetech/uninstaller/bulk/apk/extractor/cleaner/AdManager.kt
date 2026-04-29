@@ -45,6 +45,7 @@ object AdManager {
 
     // Application context
     private var appCtx: Context? = null
+    fun getAppContext(): Context? = appCtx
 
     // Ad unit IDs (production)
     private const val AD_UNIT_APP_OPEN: String = "ca-app-pub-6425054459696619/3748084648"
@@ -210,7 +211,7 @@ object AdManager {
         if (!adsEnabled) return false
         if (DEBUG_SUPPRESS_ADS) return false
         if (isAdShowing) return false
-        
+        if (BillingManager.isPremium.value) return false
         return true
     }
 
@@ -263,10 +264,18 @@ object AdManager {
         )
     }
 
+    fun isAdShowing(): Boolean = isAdShowing
+
+    fun isAppOpenReady(): Boolean = appOpenAd != null && adsEnabled && appOpenAdsEnabled && !BillingManager.isPremium.value
+
     fun showAppOpenAdIfAvailable(onDismiss: () -> Unit = {}) {
+        if (BillingManager.isPremium.value) {
+            onDismiss()
+            return
+        }
         if (!adsEnabled || !appOpenAdsEnabled) { onDismiss(); return }
         if (DEBUG_SUPPRESS_ADS) { onDismiss(); return }
-        if (isAdShowing) { onDismiss(); return }
+        if (isAdShowing) return // Don't call onDismiss if an ad is already visible
         
         val activity = currentActivity() ?: run { onDismiss(); return }
         val ad = appOpenAd ?: run { onDismiss(); return }
@@ -331,16 +340,21 @@ object AdManager {
     }
 
     fun showInterstitial(onDismiss: () -> Unit = {}, ignoreCooldown: Boolean = false) {
+        if (BillingManager.isPremium.value) {
+            onDismiss()
+            return
+        }
         if (!adsEnabled || !interstitialAdsEnabled) { onDismiss(); return }
         if (DEBUG_SUPPRESS_ADS) { onDismiss(); return }
-        val activity = currentActivity() ?: run { onDismiss(); return }
-
+        
         // Category 2 (Counter) ads must respect global cooldowns/caps.
         // Category 1 (Always-On) bypasses the 90s cooldown but still respects the "Is Ad Showing" lock.
         if (!ignoreCooldown && !canShowFullScreen()) {
             onDismiss()
             return
         }
+
+        val activity = currentActivity() ?: run { onDismiss(); return }
 
         val ad = interstitialAd
         if (ad == null || isAdShowing) {
@@ -396,6 +410,10 @@ object AdManager {
     }
 
     fun showRewarded(onRewardEarned: () -> Unit, onDismiss: () -> Unit = {}) {
+        if (BillingManager.isPremium.value) {
+            onRewardEarned()
+            return
+        }
         if (!adsEnabled || !rewardedAdsEnabled) {
             onRewardEarned()
             return
@@ -485,6 +503,10 @@ object AdManager {
 
     // --- Category 1: Always-On Method
     fun showInterstitialAlwaysOn(onDismiss: () -> Unit = {}) {
+        if (BillingManager.isPremium.value) {
+            onDismiss()
+            return
+        }
         if (!adsEnabled || !interstitialAdsEnabled || !alwaysOnInterstitialEnabled) { onDismiss(); return }
         if (isAdShowing) { onDismiss(); return }
         // Show immediately — no cooldown for Always-On

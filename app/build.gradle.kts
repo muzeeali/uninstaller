@@ -74,6 +74,8 @@ dependencies {
     implementation("com.google.android.gms:play-services-ads:25.2.0")
     // User Messaging Platform for consent (UMP)
     implementation("com.google.android.ump:user-messaging-platform:4.0.0")
+    // Google Play Billing (for in-app subscriptions)
+    implementation("com.android.billingclient:billing-ktx:7.1.1")
     // App Updates & Reviews
     implementation(libs.play.app.update)
     implementation(libs.play.review)

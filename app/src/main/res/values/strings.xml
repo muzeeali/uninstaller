@@ -125,4 +125,29 @@
     <string name="dialog_clear_history_msg">This will permanently remove all records from your uninstall history.</string>
     <string name="action_clear_all">Clear All</string>
     <string name="action_cancel">Cancel</string>
+
+    <!-- Paywall -->
+    <string name="paywall_title">Go Premium</string>
+    <string name="paywall_subtitle">Unlock all features &amp; remove ads</string>
+    <string name="paywall_feature_ads">Remove All Ads</string>
+    <string name="paywall_feature_history">Unlock Full History</string>
+    <string name="paywall_feature_future">All Future Features</string>
+    <string name="paywall_plan_monthly">Monthly</string>
+    <string name="paywall_plan_yearly">Yearly</string>
+    <string name="paywall_plan_lifetime">Lifetime</string>
+    <string name="paywall_per_month">/ month</string>
+    <string name="paywall_per_year">/ year</string>
+    <string name="paywall_one_time"> one-time</string>
+    <string name="paywall_badge_yearly">SAVE 44%</string>
+    <string name="paywall_badge_lifetime">BEST VALUE</string>
+    <string name="paywall_action_subscribe">Subscribe Now</string>
+    <string name="paywall_action_restore">Restore Purchases</string>
+    <string name="paywall_footer_note">Subscription automatically renews. Cancel anytime in Play Store.</string>
+
+    <!-- Settings & Status -->
+    <string name="status_pro">PRO</string>
+    <string name="status_free">FREE</string>
+    <string name="settings_premium_title">Upgrade to Premium</string>
+    <string name="settings_premium_desc">Remove ads &amp; unlock all features</string>
+    <string name="settings_premium_action">GO PREMIUM</string>
 </resources>
