@@ -407,8 +407,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     val appVersionName: String = try {
         val pInfo = application.packageManager.getPackageInfo(application.packageName, 0)
-        pInfo.versionName ?: "1.1.0"
-    } catch (e: Exception) { "1.1.0" }
+        pInfo.versionName ?: "1.1.1"
+    } catch (e: Exception) { "1.1.1" }
 
     private var discoveredJunk = listOf<File>()
 
@@ -1835,8 +1835,7 @@ fun HomeScreen(
                 onClick = onDeepCleanStart,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .navigationBarsPadding()
-                    .padding(bottom = 88.dp, end = 16.dp),
+                    .padding(bottom = 60.dp, end = 16.dp),
                 containerColor = EmeraldGreen,
                 contentColor = Color.White,
                 shape = RoundedCornerShape(16.dp)
@@ -2602,8 +2601,7 @@ fun BannerAdView() {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .wrapContentHeight()
-            .navigationBarsPadding(),
+            .wrapContentHeight(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Small label to make it explicit this is an ad

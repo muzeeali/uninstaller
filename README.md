@@ -13,7 +13,7 @@ A powerful, premium-grade Android utility designed for efficiency, performance, 
 
 ## 🛠️ Technical Specifications
 
-- **Version:** `1.1.0` (Build 9)
+- **Version:** `1.1.1` (Build 10)
 - **Framework:** 100% Jetpack Compose / Kotlin Coroutines
 - **Monetization:** Optimized AdMob integration featuring:
     - **Skip-1 App Open Logic:** Intelligent ad-display frequency to balance UX and revenue.
