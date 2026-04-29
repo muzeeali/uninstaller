@@ -12,8 +12,8 @@ android {
         applicationId = "com.zeetech.uninstaller.bulk.apk.extractor.cleaner"
         minSdk = 24
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.1.0"
+        versionCode = 10
+        versionName = "1.1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
