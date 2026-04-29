@@ -27,10 +27,10 @@ object BillingManager : PurchasesUpdatedListener {
     private val _isPremium = MutableStateFlow(false)
     val isPremium = _isPremium.asStateFlow()
 
-    // Placeholder Product IDs
-    const val PRODUCT_MONTHLY = "premium_monthly"
-    const val PRODUCT_YEARLY = "premium_yearly"
-    const val PRODUCT_LIFETIME = "premium_lifetime"
+    // Production Product IDs
+    const val PRODUCT_MONTHLY = "com.zeetech.uninstaller.monthly"
+    const val PRODUCT_YEARLY = "com.zeetech.uninstaller.yearly"
+    const val PRODUCT_LIFETIME = "com.zeetech.uninstaller.lifetime"
 
     var DEBUG_FORCE_PREMIUM = false
         set(value) {
