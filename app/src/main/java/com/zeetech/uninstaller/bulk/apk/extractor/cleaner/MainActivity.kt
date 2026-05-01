@@ -448,8 +448,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     val appVersionName: String = try {
         val pInfo = application.packageManager.getPackageInfo(application.packageName, 0)
-        pInfo.versionName ?: "1.1.4"
-    } catch (e: Exception) { "1.1.4" }
+        pInfo.versionName ?: "2.0.0"
+    } catch (e: Exception) { "2.0.0" }
 
     val appVersionCode: Int = try {
         val pInfo = application.packageManager.getPackageInfo(application.packageName, 0)
@@ -458,7 +458,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             pInfo.versionCode
         }
-    } catch (e: Exception) { 13 }
+    } catch (e: Exception) { 20 }
 
     private var discoveredJunk = listOf<File>()
 
@@ -1104,6 +1104,7 @@ data class HistoryAppRecord(
 
 @Composable
 fun PaywallScreen(
+    isDarkTheme: Boolean,
     onDismiss: () -> Unit,
     onPurchaseSuccess: () -> Unit
 ) {
@@ -1132,18 +1133,27 @@ fun PaywallScreen(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        // Always force dark theme for paywall branded screen
-        UninstallerTheme(darkTheme = true) {
+        UninstallerTheme(darkTheme = isDarkTheme) {
+        val bgColor = MaterialTheme.colorScheme.background
+        val surfaceColor = MaterialTheme.colorScheme.surfaceVariant
+        val onSurfaceColor = MaterialTheme.colorScheme.onSurface
+        val onSurfaceVariantColor = MaterialTheme.colorScheme.onSurfaceVariant
+
         Surface(
             modifier = Modifier.fillMaxSize(),
-            color = DarkBackground
+            color = bgColor
         ) {
             Scaffold(
                 snackbarHost = { SnackbarHost(snackbarHostState) },
                 containerColor = Color.Transparent
             ) { scaffoldPadding ->
             Box(modifier = Modifier.fillMaxSize().background(
-                Brush.verticalGradient(listOf(DarkBackground, Charcoal))
+                Brush.verticalGradient(
+                    listOf(
+                        bgColor,
+                        surfaceColor.copy(alpha = 0.6f)
+                    )
+                )
             ).padding(scaffoldPadding)) {
                 // Background Glow
                 Box(modifier = Modifier
@@ -1168,7 +1178,7 @@ fun PaywallScreen(
                         horizontalArrangement = Arrangement.End
                     ) {
                         IconButton(onClick = onDismiss) {
-                            Icon(Icons.Default.Close, null, tint = Color.White.copy(alpha = 0.5f))
+                            Icon(Icons.Default.Close, null, tint = onSurfaceColor.copy(alpha = 0.5f))
                         }
                     }
 
@@ -1179,8 +1189,8 @@ fun PaywallScreen(
                         Surface(
                             modifier = Modifier.size(80.dp),
                             shape = RoundedCornerShape(20.dp),
-                            color = Charcoal,
-                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
+                            color = surfaceColor.copy(alpha = 0.5f),
+                            border = BorderStroke(1.dp, onSurfaceColor.copy(alpha = 0.1f))
                         ) {
                             Image(
                                 painter = painterResource(id = R.mipmap.ic_launcher_foreground),
@@ -1196,7 +1206,7 @@ fun PaywallScreen(
                             Icon(
                                 Icons.Default.Star, 
                                 null, 
-                                tint = DarkBackground, 
+                                tint = Color.Black, 
                                 modifier = Modifier.padding(4.dp).size(16.dp)
                             )
                         }
@@ -1208,12 +1218,12 @@ fun PaywallScreen(
                         text = stringResource(R.string.paywall_title),
                         fontSize = 28.sp,
                         fontWeight = FontWeight.Black,
-                        color = Color.White
+                        color = onSurfaceColor
                     )
                     Text(
                         text = stringResource(R.string.paywall_subtitle),
                         fontSize = 14.sp,
-                        color = Color.Gray
+                        color = onSurfaceVariantColor
                     )
 
                     Column(
@@ -1311,7 +1321,7 @@ fun PaywallScreen(
                     Text(
                         text = stringResource(R.string.paywall_footer_note),
                         fontSize = 10.sp,
-                        color = Color.Gray.copy(alpha = 0.5f),
+                        color = onSurfaceVariantColor.copy(alpha = 0.6f),
                         textAlign = TextAlign.Center
                     )
                 }
@@ -1327,7 +1337,7 @@ fun PaywallFeatureItem(text: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(Icons.Default.CheckCircle, null, tint = EmeraldGreen, modifier = Modifier.size(20.dp))
         Spacer(modifier = Modifier.width(12.dp))
-        Text(text = text, color = Color.White, fontWeight = FontWeight.Medium)
+        Text(text = text, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
     }
 }
 
@@ -1346,8 +1356,8 @@ fun PaywallPlanCard(
             .fillMaxWidth()
             .clickable { onClick() },
         shape = RoundedCornerShape(16.dp),
-        color = if (selected) EmeraldGreen.copy(alpha = 0.1f) else Charcoal.copy(alpha = 0.5f),
-        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) EmeraldGreen else Color.White.copy(alpha = 0.1f))
+        color = if (selected) EmeraldGreen.copy(alpha = 0.1f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) EmeraldGreen else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
     ) {
         Row(
             modifier = Modifier.padding(vertical = 12.dp, horizontal = 16.dp),
@@ -1361,7 +1371,7 @@ fun PaywallPlanCard(
             Spacer(modifier = Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = name, fontWeight = FontWeight.Bold, color = Color.White)
+                    Text(text = name, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                     if (badge != null) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Surface(
@@ -1372,7 +1382,7 @@ fun PaywallPlanCard(
                                 text = badge,
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Black,
-                                color = DarkBackground,
+                                color = if (id == BillingManager.PRODUCT_LIFETIME) Color.Black else Color.White,
                                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                             )
                         }
@@ -1380,8 +1390,8 @@ fun PaywallPlanCard(
                 }
             }
             Row(verticalAlignment = Alignment.Bottom) {
-                Text(text = price, fontWeight = FontWeight.Black, fontSize = 18.sp, color = Color.White)
-                Text(text = period, fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(bottom = 2.dp))
+                Text(text = price, fontWeight = FontWeight.Black, fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface)
+                Text(text = period, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 2.dp))
             }
         }
     }
@@ -1716,6 +1726,7 @@ fun UninstallerApp(
 
         if (showPaywall) {
             PaywallScreen(
+                isDarkTheme = isDarkTheme,
                 onDismiss = { 
                     showPaywall = false
                     val prefs = context.getSharedPreferences("surgical_uninstaller_prefs", Context.MODE_PRIVATE)
@@ -1825,7 +1836,7 @@ fun UninstallerTopBar(
                                     Icon(
                                         imageVector = Icons.Default.Lock,
                                         contentDescription = "Locked",
-                                        tint = Color.White,
+                                        tint = Color.Red,
                                         modifier = Modifier.size(10.dp).align(Alignment.BottomEnd).offset(x = 2.dp, y = 2.dp)
                                     )
                                 }
