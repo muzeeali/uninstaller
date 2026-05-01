@@ -1115,6 +1115,7 @@ fun PaywallScreen(
     val prices by BillingManager.productPrices.collectAsState()
     val isRestoring by BillingManager.isRestoring.collectAsState()
     val restoreResult by BillingManager.restoreResult.collectAsState()
+    val pricesLoaded by BillingManager.pricesLoaded.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(isPremium) {
@@ -1237,8 +1238,11 @@ fun PaywallScreen(
 
                     Spacer(modifier = Modifier.height(24.dp))
 
+                    // Shows Firebase Remote Config prices immediately;
+                    // recomposed automatically with real localized prices once Play Billing responds.
                     val monthlyPriceStr = prices[BillingManager.PRODUCT_MONTHLY] ?: "$6.99"
                     val yearlyPriceStr = prices[BillingManager.PRODUCT_YEARLY] ?: "$69.99"
+                    val lifetimePriceStr = prices[BillingManager.PRODUCT_LIFETIME] ?: "$269.99"
                     
                     val mPriceNum = monthlyPriceStr.replace(Regex("[^0-9,.]"), "").replace(",", ".").toFloatOrNull() ?: 6.99f
                     val yPriceNum = yearlyPriceStr.replace(Regex("[^0-9,.]"), "").replace(",", ".").toFloatOrNull() ?: 69.99f
@@ -1266,7 +1270,7 @@ fun PaywallScreen(
                         PaywallPlanCard(
                             id = BillingManager.PRODUCT_LIFETIME,
                             name = stringResource(R.string.paywall_plan_lifetime),
-                            price = prices[BillingManager.PRODUCT_LIFETIME] ?: "$269.99",
+                            price = lifetimePriceStr,
                             period = stringResource(R.string.paywall_one_time),
                             badge = stringResource(R.string.paywall_badge_lifetime),
                             selected = selectedPlanId == BillingManager.PRODUCT_LIFETIME,
@@ -1390,7 +1394,21 @@ fun PaywallPlanCard(
                 }
             }
             Row(verticalAlignment = Alignment.Bottom) {
-                Text(text = price, fontWeight = FontWeight.Black, fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface)
+                AnimatedContent(
+                    targetState = price,
+                    transitionSpec = {
+                        fadeIn(animationSpec = tween(300)) togetherWith
+                        fadeOut(animationSpec = tween(150))
+                    },
+                    label = "price_anim"
+                ) { displayPrice ->
+                    Text(
+                        text = displayPrice,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 18.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
                 Text(text = period, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 2.dp))
             }
         }

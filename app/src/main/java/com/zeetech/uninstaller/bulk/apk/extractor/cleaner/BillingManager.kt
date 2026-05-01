@@ -31,6 +31,10 @@ object BillingManager : PurchasesUpdatedListener {
     private val _productPrices = MutableStateFlow<Map<String, String>>(emptyMap())
     val productPrices = _productPrices.asStateFlow()
 
+    // True once real prices have been fetched from the Play Billing client
+    private val _pricesLoaded = MutableStateFlow(false)
+    val pricesLoaded = _pricesLoaded.asStateFlow()
+
     private val _fallbackPrices = MutableStateFlow<Map<String, String>>(mapOf(
         PRODUCT_MONTHLY to "$6.99",
         PRODUCT_YEARLY to "$69.99",
@@ -121,22 +125,29 @@ object BillingManager : PurchasesUpdatedListener {
     fun queryPurchases() {
         if (!billingClient.isReady) return
 
-        // Query Subscriptions
+        // Collect both SUBS + INAPP results before calling updatePremiumStatus
+        // to avoid race-condition where one query transiently revokes premium.
+        var subsResult: List<Purchase>? = null
+        var inappsResult: List<Purchase>? = null
+
+        fun tryProcess() {
+            val subs = subsResult ?: return   // wait until both are ready
+            val inapps = inappsResult ?: return
+            processPurchases(subs + inapps)
+        }
+
         billingClient.queryPurchasesAsync(
             QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.SUBS).build()
         ) { result, purchases ->
-            if (result.responseCode == BillingClient.BillingResponseCode.OK) {
-                processPurchases(purchases)
-            }
+            subsResult = if (result.responseCode == BillingClient.BillingResponseCode.OK) purchases else emptyList()
+            tryProcess()
         }
 
-        // Query One-time (Lifetime)
         billingClient.queryPurchasesAsync(
             QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.INAPP).build()
         ) { result, purchases ->
-            if (result.responseCode == BillingClient.BillingResponseCode.OK) {
-                processPurchases(purchases)
-            }
+            inappsResult = if (result.responseCode == BillingClient.BillingResponseCode.OK) purchases else emptyList()
+            tryProcess()
         }
     }
 
@@ -177,16 +188,16 @@ object BillingManager : PurchasesUpdatedListener {
 
     private fun updatePremiumStatus(active: Boolean) {
         val finalStatus = active || DEBUG_FORCE_PREMIUM
-        if (_isPremium.value != finalStatus) {
-            _isPremium.value = finalStatus
-            // Save to cache
-            val ctx = AdManager.getAppContext() // AdManager has it, or we can pass it
-            ctx?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                ?.edit()?.putBoolean(KEY_IS_PREMIUM, finalStatus)?.apply()
-            
-            // Update Firebase User Property
-            firebaseAnalytics.setUserProperty("premium_status", if (finalStatus) "premium" else "basic")
-        }
+        _isPremium.value = finalStatus
+
+        // Always persist so the cache is correct on every evaluation,
+        // including first-run where the old value equals the new value.
+        val ctx = AdManager.getAppContext()
+        ctx?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            ?.edit()?.putBoolean(KEY_IS_PREMIUM, finalStatus)?.apply()
+
+        // Update Firebase User Property
+        firebaseAnalytics.setUserProperty("premium_status", if (finalStatus) "premium" else "basic")
     }
 
     private fun fetchProductDetails() {
@@ -209,15 +220,17 @@ object BillingManager : PurchasesUpdatedListener {
                     }
                     price?.let { newPrices[details.productId] = it }
                 }
-                // Merge with fallbacks so missing items still have a price
+                // Real prices from Play — overwrite everything (including remote config fallbacks)
                 val mergedPrices = _fallbackPrices.value.toMutableMap()
                 mergedPrices.putAll(newPrices)
                 _productPrices.value = mergedPrices
+                _pricesLoaded.value = true   // signal UI: real localized prices are ready
             } else {
-                // If query fails, ensure fallbacks are used
+                // Billing query failed — fall back to remote config / hardcoded values
                 if (_productPrices.value.isEmpty()) {
                     _productPrices.value = _fallbackPrices.value
                 }
+                _pricesLoaded.value = true   // still mark loaded so UI stops showing shimmer
             }
         }
     }
@@ -274,7 +287,9 @@ object BillingManager : PurchasesUpdatedListener {
         billingClient.queryPurchasesAsync(
             QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.SUBS).build()
         ) { result, purchases ->
-            if (result.responseCode == BillingClient.BillingResponseCode.OK && purchases.isNotEmpty()) {
+            // Only count as "found" if there is at least one truly PURCHASED item
+            if (result.responseCode == BillingClient.BillingResponseCode.OK &&
+                purchases.any { it.purchaseState == Purchase.PurchaseState.PURCHASED }) {
                 processPurchases(purchases)
                 foundPremium = true
             }
@@ -284,7 +299,8 @@ object BillingManager : PurchasesUpdatedListener {
         billingClient.queryPurchasesAsync(
             QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.INAPP).build()
         ) { result, purchases ->
-            if (result.responseCode == BillingClient.BillingResponseCode.OK && purchases.isNotEmpty()) {
+            if (result.responseCode == BillingClient.BillingResponseCode.OK &&
+                purchases.any { it.purchaseState == Purchase.PurchaseState.PURCHASED }) {
                 processPurchases(purchases)
                 foundPremium = true
             }
