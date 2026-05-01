@@ -27,6 +27,9 @@ object BillingManager : PurchasesUpdatedListener {
     private val _isPremium = MutableStateFlow(false)
     val isPremium = _isPremium.asStateFlow()
 
+    private val _productPrices = MutableStateFlow<Map<String, String>>(emptyMap())
+    val productPrices = _productPrices.asStateFlow()
+
     // Production Product IDs
     const val PRODUCT_MONTHLY = "com.zeetech.uninstaller.monthly"
     const val PRODUCT_YEARLY = "com.zeetech.uninstaller.yearly"
@@ -59,6 +62,7 @@ object BillingManager : PurchasesUpdatedListener {
                 if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
                     Log.d(TAG, "Billing setup finished")
                     queryPurchases()
+                    fetchProductDetails()
                 }
             }
 
@@ -137,6 +141,31 @@ object BillingManager : PurchasesUpdatedListener {
             
             // Update Firebase User Property
             firebaseAnalytics.setUserProperty("premium_status", if (finalStatus) "premium" else "basic")
+        }
+    }
+
+    private fun fetchProductDetails() {
+        val productList = listOf(
+            QueryProductDetailsParams.Product.newBuilder().setProductId(PRODUCT_MONTHLY).setProductType(BillingClient.ProductType.SUBS).build(),
+            QueryProductDetailsParams.Product.newBuilder().setProductId(PRODUCT_YEARLY).setProductType(BillingClient.ProductType.SUBS).build(),
+            QueryProductDetailsParams.Product.newBuilder().setProductId(PRODUCT_LIFETIME).setProductType(BillingClient.ProductType.INAPP).build()
+        )
+
+        val params = QueryProductDetailsParams.newBuilder().setProductList(productList).build()
+
+        billingClient.queryProductDetailsAsync(params) { result, productDetailsList ->
+            if (result.responseCode == BillingClient.BillingResponseCode.OK) {
+                val newPrices = mutableMapOf<String, String>()
+                productDetailsList.forEach { details ->
+                    val price = if (details.productType == BillingClient.ProductType.SUBS) {
+                        details.subscriptionOfferDetails?.firstOrNull()?.pricingPhases?.pricingPhaseList?.firstOrNull()?.formattedPrice
+                    } else {
+                        details.oneTimePurchaseOfferDetails?.formattedPrice
+                    }
+                    price?.let { newPrices[details.productId] = it }
+                }
+                _productPrices.value = newPrices
+            }
         }
     }
 

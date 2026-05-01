@@ -442,8 +442,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     val appVersionName: String = try {
         val pInfo = application.packageManager.getPackageInfo(application.packageName, 0)
-        pInfo.versionName ?: "1.1.3"
-    } catch (e: Exception) { "1.1.3" }
+        pInfo.versionName ?: "1.1.4"
+    } catch (e: Exception) { "1.1.4" }
 
     val appVersionCode: Int = try {
         val pInfo = application.packageManager.getPackageInfo(application.packageName, 0)
@@ -452,7 +452,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             pInfo.versionCode
         }
-    } catch (e: Exception) { 12 }
+    } catch (e: Exception) { 13 }
 
     private var discoveredJunk = listOf<File>()
 
@@ -1105,6 +1105,7 @@ fun PaywallScreen(
     val activity = context.findActivity() as? Activity
     var selectedPlanId by rememberSaveable { mutableStateOf(BillingManager.PRODUCT_YEARLY) }
     val isPremium by BillingManager.isPremium.collectAsState()
+    val prices by BillingManager.productPrices.collectAsState()
 
     LaunchedEffect(isPremium) {
         if (isPremium) onPurchaseSuccess()
@@ -1207,7 +1208,7 @@ fun PaywallScreen(
                         PaywallPlanCard(
                             id = BillingManager.PRODUCT_MONTHLY,
                             name = stringResource(R.string.paywall_plan_monthly),
-                            price = "$2.99",
+                            price = prices[BillingManager.PRODUCT_MONTHLY] ?: "$6.99",
                             period = stringResource(R.string.paywall_per_month),
                             selected = selectedPlanId == BillingManager.PRODUCT_MONTHLY,
                             onClick = { selectedPlanId = BillingManager.PRODUCT_MONTHLY }
@@ -1215,7 +1216,7 @@ fun PaywallScreen(
                         PaywallPlanCard(
                             id = BillingManager.PRODUCT_YEARLY,
                             name = stringResource(R.string.paywall_plan_yearly),
-                            price = "$19.99",
+                            price = prices[BillingManager.PRODUCT_YEARLY] ?: "$69.99",
                             period = stringResource(R.string.paywall_per_year),
                             badge = stringResource(R.string.paywall_badge_yearly),
                             selected = selectedPlanId == BillingManager.PRODUCT_YEARLY,
@@ -1224,7 +1225,7 @@ fun PaywallScreen(
                         PaywallPlanCard(
                             id = BillingManager.PRODUCT_LIFETIME,
                             name = stringResource(R.string.paywall_plan_lifetime),
-                            price = "$49.99",
+                            price = prices[BillingManager.PRODUCT_LIFETIME] ?: "$269.99",
                             period = stringResource(R.string.paywall_one_time),
                             badge = stringResource(R.string.paywall_badge_lifetime),
                             selected = selectedPlanId == BillingManager.PRODUCT_LIFETIME,
