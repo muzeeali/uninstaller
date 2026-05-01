@@ -70,6 +70,12 @@ object AdManager {
     // Tracks whether the application lifecycle onStart has run at least once.
     // Used by MainActivity to decide first-start behavior across Activity recreations.
     var appLifecycleFirstStart = true
+    
+    // Tracks if an app open ad was successfully rendered on screen
+    var appOpenWasActuallyShown = false
+    
+    // Called when an app open ad is dismissed — set by MainActivity before showing
+    var onAppOpenAdDismissed: (() -> Unit)? = null
 
     // Interstitial
     private var interstitialAd: InterstitialAd? = null
@@ -295,8 +301,10 @@ object AdManager {
         }
 
         isAdShowing = true
+        appOpenWasActuallyShown = false
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
             override fun onAdShowedFullScreenContent() {
+                appOpenWasActuallyShown = true
             }
             override fun onAdDismissedFullScreenContent() {
                 isAdShowing = false
@@ -304,6 +312,10 @@ object AdManager {
                 appOpenShownThisColdStart = true
                 loadAppOpen()
                 onDismiss()
+                if (appOpenWasActuallyShown) {
+                    onAppOpenAdDismissed?.invoke()
+                    onAppOpenAdDismissed = null
+                }
             }
             override fun onAdFailedToShowFullScreenContent(error: AdError) {
                 isAdShowing = false

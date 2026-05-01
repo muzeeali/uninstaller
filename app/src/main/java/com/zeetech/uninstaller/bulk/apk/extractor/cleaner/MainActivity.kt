@@ -188,33 +188,38 @@ class MainActivity : ComponentActivity() {
             override fun onStart(owner: LifecycleOwner) {
                 // Auto-refresh lists and detect uninstalled apps on resume
                 viewModel.refreshHistory()
-                
+
+                // Capture cold-start flag immediately and flip it
+                val isColdStart = AdManager.appLifecycleFirstStart
+                AdManager.appLifecycleFirstStart = false
+
+                // Register what happens when the app open ad is dismissed.
+                // This fires from AdManager.onAdDismissedFullScreenContent, so it works
+                // regardless of which path showed the ad (fast-load vs wait-loop).
+                AdManager.onAppOpenAdDismissed = {
+                    if (isColdStart) {
+                        lifecycleScope.launch {
+                            delay(600)
+                            viewModel.triggerPaywall()
+                        }
+                    } else {
+                        showForegroundRatingPrompt()
+                    }
+                }
+
                 lifecycleScope.launch {
-                    // Only run if ad isn't already showing
                     if (AdManager.isAdShowing()) return@launch
 
-                    // Cold Start Sequence: Wait for Ad -> Show Ad -> Show Paywall
-                    if (AdManager.appLifecycleFirstStart) {
+                    // Cold start: wait up to 5 sec for ad before giving up
+                    if (isColdStart) {
                         var timeout = 0
-                        while (!AdManager.isAppOpenReady() && timeout < 50) { // Wait up to 5 seconds
+                        while (!AdManager.isAppOpenReady() && timeout < 50) {
                             delay(100)
                             timeout++
                         }
                     }
-                    
-                    AdManager.showAppOpenAdIfAvailable {
-                        if (AdManager.appLifecycleFirstStart) {
-                            // Cold Start: Trigger Paywall after ad dismissal
-                            lifecycleScope.launch {
-                                delay(600) // Slightly longer delay for safety
-                                viewModel.triggerPaywall()
-                            }
-                        } else {
-                            // Resume: Show rating prompt
-                            showForegroundRatingPrompt()
-                        }
-                        AdManager.appLifecycleFirstStart = false
-                    }
+
+                    AdManager.showAppOpenAdIfAvailable()
                 }
             }
         })
