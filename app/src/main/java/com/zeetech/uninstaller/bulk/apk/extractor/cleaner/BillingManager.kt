@@ -37,6 +37,15 @@ object BillingManager : PurchasesUpdatedListener {
         PRODUCT_LIFETIME to "$269.99"
     ))
 
+    private val _isRestoring = MutableStateFlow(false)
+    val isRestoring = _isRestoring.asStateFlow()
+
+    // null = no pending message; non-null = show snackbar with this text
+    private val _restoreResult = MutableStateFlow<String?>(null)
+    val restoreResult = _restoreResult.asStateFlow()
+
+    fun clearRestoreResult() { _restoreResult.value = null }
+
     // Production Product IDs
     const val PRODUCT_MONTHLY = "com.zeetech.uninstaller.monthly"
     const val PRODUCT_YEARLY = "com.zeetech.uninstaller.yearly"
@@ -245,7 +254,42 @@ object BillingManager : PurchasesUpdatedListener {
     }
 
     fun restorePurchases() {
-        queryPurchases()
+        if (!billingClient.isReady || _isRestoring.value) return
+        _isRestoring.value = true
+        var completedQueries = 0
+        var foundPremium = false
+
+        fun onQueryComplete() {
+            completedQueries++
+            if (completedQueries == 2) {
+                _isRestoring.value = false
+                _restoreResult.value = if (foundPremium) {
+                    "✓ Purchase restored successfully!"
+                } else {
+                    "No active purchases found to restore."
+                }
+            }
+        }
+
+        billingClient.queryPurchasesAsync(
+            QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.SUBS).build()
+        ) { result, purchases ->
+            if (result.responseCode == BillingClient.BillingResponseCode.OK && purchases.isNotEmpty()) {
+                processPurchases(purchases)
+                foundPremium = true
+            }
+            onQueryComplete()
+        }
+
+        billingClient.queryPurchasesAsync(
+            QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.INAPP).build()
+        ) { result, purchases ->
+            if (result.responseCode == BillingClient.BillingResponseCode.OK && purchases.isNotEmpty()) {
+                processPurchases(purchases)
+                foundPremium = true
+            }
+            onQueryComplete()
+        }
     }
 
     private fun logPurchaseEvent(purchases: List<Purchase>) {

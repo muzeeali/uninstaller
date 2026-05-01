@@ -97,6 +97,7 @@ import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
 import android.view.ViewGroup
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.graphics.Brush
@@ -1111,22 +1112,39 @@ fun PaywallScreen(
     var selectedPlanId by rememberSaveable { mutableStateOf(BillingManager.PRODUCT_YEARLY) }
     val isPremium by BillingManager.isPremium.collectAsState()
     val prices by BillingManager.productPrices.collectAsState()
+    val isRestoring by BillingManager.isRestoring.collectAsState()
+    val restoreResult by BillingManager.restoreResult.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(isPremium) {
         if (isPremium) onPurchaseSuccess()
+    }
+
+    // Show snackbar feedback for restore result
+    LaunchedEffect(restoreResult) {
+        restoreResult?.let { msg ->
+            snackbarHostState.showSnackbar(msg)
+            BillingManager.clearRestoreResult()
+        }
     }
 
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        // Always force dark theme for paywall branded screen
+        UninstallerTheme(darkTheme = true) {
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = DarkBackground
         ) {
+            Scaffold(
+                snackbarHost = { SnackbarHost(snackbarHostState) },
+                containerColor = Color.Transparent
+            ) { scaffoldPadding ->
             Box(modifier = Modifier.fillMaxSize().background(
                 Brush.verticalGradient(listOf(DarkBackground, Charcoal))
-            )) {
+            ).padding(scaffoldPadding)) {
                 // Background Glow
                 Box(modifier = Modifier
                     .size(300.dp)
@@ -1263,14 +1281,29 @@ fun PaywallScreen(
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = stringResource(R.string.paywall_action_restore),
-                            fontSize = 12.sp,
-                            color = EmeraldGreen,
-                            modifier = Modifier.clickable { BillingManager.restorePurchases() }
-                        )
+                        if (isRestoring) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                color = EmeraldGreen,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "Restoring...",
+                                fontSize = 12.sp,
+                                color = EmeraldGreen
+                            )
+                        } else {
+                            Text(
+                                text = stringResource(R.string.paywall_action_restore),
+                                fontSize = 12.sp,
+                                color = EmeraldGreen,
+                                modifier = Modifier.clickable { BillingManager.restorePurchases() }
+                            )
+                        }
                     }
                     
                     Spacer(modifier = Modifier.height(8.dp))
@@ -1283,6 +1316,8 @@ fun PaywallScreen(
                     )
                 }
             }
+            }
+        }
         }
     }
 }
@@ -2211,11 +2246,18 @@ fun HomeScreen(
 
         // 5. Surgical Clean Floating Button
         if (selectedApps.isEmpty()) {
+            // Measure the banner ad height so FAB always clears it on all screen sizes
+            var bannerHeightPx by remember { mutableIntStateOf(0) }
+            val density = androidx.compose.ui.platform.LocalDensity.current
+            val bannerHeightDp = with(density) { bannerHeightPx.toDp() }
+            // If premium, use standard 16dp. Otherwise, sit exactly at the top of the banner (0dp gap)
+            val fabBottomPadding = if (isPremium) 16.dp else bannerHeightDp.coerceAtLeast(16.dp)
+
             androidx.compose.material3.SmallFloatingActionButton(
                 onClick = onDeepCleanStart,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(bottom = if (isPremium) 16.dp else 60.dp, end = 16.dp),
+                    .padding(bottom = fabBottomPadding, end = 16.dp),
                 containerColor = EmeraldGreen,
                 contentColor = Color.White,
                 shape = RoundedCornerShape(16.dp)
@@ -2226,14 +2268,15 @@ fun HomeScreen(
                     Text(stringResource(R.string.action_surgical_clean), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
-        }
-        
-        // 6. Banner Ad — always visible at absolute bottom when no bulk bar
-        if (selectedApps.isEmpty()) {
+
+            // 6. Banner Ad — always visible at absolute bottom when no bulk bar
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
+                    .onSizeChanged { size ->
+                        bannerHeightPx = size.height
+                    }
             ) {
                 BannerAdView()
             }
@@ -2969,11 +3012,25 @@ fun BannerAdView() {
     val isPremium by BillingManager.isPremium.collectAsState()
     if (isPremium) return
 
+    var isAdLoaded by remember { mutableStateOf(false) }
     val context = LocalContext.current
     // Use MaterialTheme colorScheme so banner label follows the app's theme toggle
     val contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+    
     // Use centralized AdManager to create and manage banners
-    val adView = remember { AdManager.createAdaptiveBanner(context) } ?: return
+    val adView = remember { 
+        AdManager.createAdaptiveBanner(
+            context,
+            onLoaded = { isAdLoaded = true },
+            onFailed = { isAdLoaded = false }
+        ) 
+    } ?: return
+
+    if (!isAdLoaded) {
+        // Return 0-height box while loading to keep button at bottom
+        Box(modifier = Modifier.height(0.dp).fillMaxWidth())
+        return
+    }
 
     DisposableEffect(adView) {
         onDispose { AdManager.destroyBanner(adView) }
@@ -2987,27 +3044,6 @@ fun BannerAdView() {
             .wrapContentHeight(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Small label to make it explicit this is an ad
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.06f),
-                shape = RoundedCornerShape(8.dp),
-                tonalElevation = 0.dp
-            ) {
-                Text(
-                    text = "Advertisement",
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                    fontSize = 10.sp,
-                    color = contentColor
-                )
-            }
-        }
-
         AndroidView(
             modifier = Modifier
                 .fillMaxWidth()
