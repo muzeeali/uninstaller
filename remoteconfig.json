@@ -1,0 +1,106 @@
+{
+  "parameters": {
+    "latest_version_code": {
+      "defaultValue": {
+        "value": "10"
+      },
+      "valueType": "NUMBER"
+    },
+    "rewarded_ads_enabled": {
+      "defaultValue": {
+        "value": "true"
+      },
+      "valueType": "BOOLEAN"
+    },
+    "banner_ads_enabled": {
+      "defaultValue": {
+        "value": "true"
+      },
+      "valueType": "BOOLEAN"
+    },
+    "fallback_url": {
+      "defaultValue": {
+        "value": "https://play.google.com/store/apps/details?id=com.zeetech.uninstaller.bulk.apk.extractor.cleaner"
+      },
+      "valueType": "STRING"
+    },
+    "interstitial_ads_enabled": {
+      "defaultValue": {
+        "value": "true"
+      },
+      "valueType": "BOOLEAN"
+    },
+    "is_test_update": {
+      "defaultValue": {
+        "value": "false"
+      },
+      "valueType": "BOOLEAN"
+    },
+    "counter_interstitial_enabled": {
+      "defaultValue": {
+        "value": "true"
+      },
+      "valueType": "BOOLEAN"
+    },
+    "interstitial_counter_frequency": {
+      "defaultValue": {
+        "value": "5"
+      },
+      "valueType": "NUMBER"
+    },
+    "update_url": {
+      "defaultValue": {
+        "value": "https://play.google.com/store/apps/details?id=com.zeetech.uninstaller.bulk.apk.extractor.cleaner"
+      },
+      "valueType": "STRING"
+    },
+    "ads_enabled": {
+      "defaultValue": {
+        "value": "true"
+      },
+      "valueType": "BOOLEAN"
+    },
+    "is_update_mandatory": {
+      "defaultValue": {
+        "value": "true"
+      },
+      "valueType": "BOOLEAN"
+    },
+    "always_on_interstitial_enabled": {
+      "defaultValue": {
+        "value": "true"
+      },
+      "valueType": "BOOLEAN"
+    },
+    "app_open_ads_enabled": {
+      "defaultValue": {
+        "value": "true"
+      },
+      "valueType": "BOOLEAN"
+    },
+    "paywall_price_monthly": {
+      "defaultValue": {
+        "value": "$6.99"
+      },
+      "valueType": "STRING"
+    },
+    "paywall_price_yearly": {
+      "defaultValue": {
+        "value": "$69.99"
+      },
+      "valueType": "STRING"
+    },
+    "paywall_price_lifetime": {
+      "defaultValue": {
+        "value": "$269.99"
+      },
+      "valueType": "STRING"
+    },
+    "force_premium_enabled": {
+      "defaultValue": {
+        "value": "false"
+      },
+      "valueType": "BOOLEAN"
+    }
+  }
+}

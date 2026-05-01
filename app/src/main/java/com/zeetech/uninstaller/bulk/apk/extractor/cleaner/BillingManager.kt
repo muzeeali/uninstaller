@@ -7,6 +7,7 @@ import com.android.billingclient.api.*
 import com.google.firebase.analytics.FirebaseAnalytics
 import com.google.firebase.analytics.ktx.analytics
 import com.google.firebase.ktx.Firebase
+import com.google.firebase.remoteconfig.FirebaseRemoteConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -29,6 +30,12 @@ object BillingManager : PurchasesUpdatedListener {
 
     private val _productPrices = MutableStateFlow<Map<String, String>>(emptyMap())
     val productPrices = _productPrices.asStateFlow()
+
+    private val _fallbackPrices = MutableStateFlow<Map<String, String>>(mapOf(
+        PRODUCT_MONTHLY to "$6.99",
+        PRODUCT_YEARLY to "$69.99",
+        PRODUCT_LIFETIME to "$269.99"
+    ))
 
     // Production Product IDs
     const val PRODUCT_MONTHLY = "com.zeetech.uninstaller.monthly"
@@ -54,6 +61,35 @@ object BillingManager : PurchasesUpdatedListener {
             .build()
 
         connectToPlayBilling()
+        
+        // Fetch Fallback Prices & Force Premium Flag
+        val remoteConfig = FirebaseRemoteConfig.getInstance()
+        remoteConfig.fetchAndActivate().addOnCompleteListener { task ->
+            if (task.isSuccessful) {
+                if (remoteConfig.getBoolean("force_premium_enabled")) {
+                    updatePremiumStatus(true)
+                }
+                
+                val mPrice = remoteConfig.getString("paywall_price_monthly").takeIf { it.isNotEmpty() } ?: "$6.99"
+                val yPrice = remoteConfig.getString("paywall_price_yearly").takeIf { it.isNotEmpty() } ?: "$69.99"
+                val lPrice = remoteConfig.getString("paywall_price_lifetime").takeIf { it.isNotEmpty() } ?: "$269.99"
+                
+                val fallbacks = mapOf(
+                    PRODUCT_MONTHLY to mPrice,
+                    PRODUCT_YEARLY to yPrice,
+                    PRODUCT_LIFETIME to lPrice
+                )
+                _fallbackPrices.value = fallbacks
+                
+                if (_productPrices.value.isEmpty()) {
+                    _productPrices.value = fallbacks
+                }
+            } else {
+                if (_productPrices.value.isEmpty()) {
+                    _productPrices.value = _fallbackPrices.value
+                }
+            }
+        }
     }
 
     private fun connectToPlayBilling() {
@@ -154,7 +190,7 @@ object BillingManager : PurchasesUpdatedListener {
         val params = QueryProductDetailsParams.newBuilder().setProductList(productList).build()
 
         billingClient.queryProductDetailsAsync(params) { result, productDetailsList ->
-            if (result.responseCode == BillingClient.BillingResponseCode.OK) {
+            if (result.responseCode == BillingClient.BillingResponseCode.OK && productDetailsList.isNotEmpty()) {
                 val newPrices = mutableMapOf<String, String>()
                 productDetailsList.forEach { details ->
                     val price = if (details.productType == BillingClient.ProductType.SUBS) {
@@ -164,7 +200,15 @@ object BillingManager : PurchasesUpdatedListener {
                     }
                     price?.let { newPrices[details.productId] = it }
                 }
-                _productPrices.value = newPrices
+                // Merge with fallbacks so missing items still have a price
+                val mergedPrices = _fallbackPrices.value.toMutableMap()
+                mergedPrices.putAll(newPrices)
+                _productPrices.value = mergedPrices
+            } else {
+                // If query fails, ensure fallbacks are used
+                if (_productPrices.value.isEmpty()) {
+                    _productPrices.value = _fallbackPrices.value
+                }
             }
         }
     }

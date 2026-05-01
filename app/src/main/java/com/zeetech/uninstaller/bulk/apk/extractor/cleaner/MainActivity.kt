@@ -1209,11 +1209,19 @@ fun PaywallScreen(
 
                     Spacer(modifier = Modifier.height(24.dp))
 
+                    val monthlyPriceStr = prices[BillingManager.PRODUCT_MONTHLY] ?: "$6.99"
+                    val yearlyPriceStr = prices[BillingManager.PRODUCT_YEARLY] ?: "$69.99"
+                    
+                    val mPriceNum = monthlyPriceStr.replace(Regex("[^0-9,.]"), "").replace(",", ".").toFloatOrNull() ?: 6.99f
+                    val yPriceNum = yearlyPriceStr.replace(Regex("[^0-9,.]"), "").replace(",", ".").toFloatOrNull() ?: 69.99f
+                    val savingsPercent = if (mPriceNum > 0f) Math.round((1f - (yPriceNum / 12f) / mPriceNum) * 100f).coerceAtLeast(0) else 44
+                    val yearlyBadgeText = "SAVE $savingsPercent%"
+
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         PaywallPlanCard(
                             id = BillingManager.PRODUCT_MONTHLY,
                             name = stringResource(R.string.paywall_plan_monthly),
-                            price = prices[BillingManager.PRODUCT_MONTHLY] ?: "$6.99",
+                            price = monthlyPriceStr,
                             period = stringResource(R.string.paywall_per_month),
                             selected = selectedPlanId == BillingManager.PRODUCT_MONTHLY,
                             onClick = { selectedPlanId = BillingManager.PRODUCT_MONTHLY }
@@ -1221,9 +1229,9 @@ fun PaywallScreen(
                         PaywallPlanCard(
                             id = BillingManager.PRODUCT_YEARLY,
                             name = stringResource(R.string.paywall_plan_yearly),
-                            price = prices[BillingManager.PRODUCT_YEARLY] ?: "$69.99",
+                            price = yearlyPriceStr,
                             period = stringResource(R.string.paywall_per_year),
-                            badge = stringResource(R.string.paywall_badge_yearly),
+                            badge = yearlyBadgeText,
                             selected = selectedPlanId == BillingManager.PRODUCT_YEARLY,
                             onClick = { selectedPlanId = BillingManager.PRODUCT_YEARLY }
                         )
@@ -1462,6 +1470,7 @@ fun UninstallerApp(
                         else currentScreen = "settings"
                     },
                     showSettings = currentScreen == "home",
+                    isPremium = isPremium,
                     // Home: Refresh + History | Settings: Share + History | History: Refresh + Settings
                     onRefresh = when (currentScreen) {
                         "home" -> {{
@@ -1578,7 +1587,8 @@ fun UninstallerApp(
                             onTabClicked = { AdManager.onTabSwitchedByClick() },
                             onTabSwiped = { AdManager.onTabSwitchedBySwipe() },
                             onSelectAll = { AdManager.onSelectAll() },
-                            onSelectionChanged = { count -> AdManager.onSelectionChanged(count) }
+                            onSelectionChanged = { count -> AdManager.onSelectionChanged(count) },
+                            isPremium = isPremium
                         )
                     } else if (currentScreen == "history") {
                         val history by viewModel.uninstalledHistory.collectAsState()
@@ -1745,7 +1755,8 @@ fun UninstallerTopBar(
     onRefresh: (() -> Unit)? = null,
     onShareApp: (() -> Unit)? = null,
     onSettingsNav: (() -> Unit)? = null,
-    onHistory: (() -> Unit)? = null
+    onHistory: (() -> Unit)? = null,
+    isPremium: Boolean = false
 ) {
     @OptIn(ExperimentalMaterial3Api::class)
     CenterAlignedTopAppBar(
@@ -1768,12 +1779,22 @@ fun UninstallerTopBar(
                     }
                     if (onHistory != null) {
                         IconButton(onClick = onHistory) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_history),
-                                contentDescription = "History",
-                                tint = EmeraldGreen,
-                                modifier = Modifier.size(22.dp)
-                            )
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_history),
+                                    contentDescription = "History",
+                                    tint = if (isPremium) EmeraldGreen else Color.Red,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                if (!isPremium) {
+                                    Icon(
+                                        imageVector = Icons.Default.Lock,
+                                        contentDescription = "Locked",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(10.dp).align(Alignment.BottomEnd).offset(x = 2.dp, y = 2.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                     if (onShareApp != null) {
@@ -1885,7 +1906,8 @@ fun HomeScreen(
     onTabClicked: () -> Unit = {},
     onTabSwiped: () -> Unit = {},
     onSelectAll: () -> Unit = {},
-    onSelectionChanged: (Int) -> Unit = {}
+    onSelectionChanged: (Int) -> Unit = {},
+    isPremium: Boolean = false
 ) {
     var searchQuery by remember { mutableStateOf("") }
     val selectedApps = remember { mutableStateListOf<AppInfo>() }
@@ -2193,7 +2215,7 @@ fun HomeScreen(
                 onClick = onDeepCleanStart,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(bottom = 60.dp, end = 16.dp),
+                    .padding(bottom = if (isPremium) 16.dp else 60.dp, end = 16.dp),
                 containerColor = EmeraldGreen,
                 contentColor = Color.White,
                 shape = RoundedCornerShape(16.dp)
