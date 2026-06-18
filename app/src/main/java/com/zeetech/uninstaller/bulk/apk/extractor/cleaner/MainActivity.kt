@@ -244,7 +244,7 @@ class MainActivity : ComponentActivity() {
         // Initialize Update Manager
         updateManager = UpdateManager(this)
 
-        // Automated Surgical Scan on Launch
+        // Automated Storage Sweep on Launch
         if (viewModel.scanOnLaunch.value && viewModel.hasAllFilesAccess()) {
             viewModel.startDeepClean()
         }
@@ -2585,7 +2585,7 @@ fun HomeScreen(
             }
         }
 
-        // 5. Surgical Clean Floating Button
+        // 5. Storage Sweep Floating Button
         if (selectedApps.isEmpty()) {
             // Measure the banner ad height so FAB always clears it on all screen sizes
             var bannerHeightPx by remember { mutableIntStateOf(0) }
@@ -3124,8 +3124,8 @@ fun DeepCleanProgressScreen(progress: Float, currentTask: String) {
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Row {
-                Text("SURGICAL ", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = LogoPurple)
-                Text("CLEAN", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = EmeraldGreen)
+                Text("STORAGE ", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = LogoPurple)
+                Text("SWEEP", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = EmeraldGreen)
             }
             Text(currentTask, color = Color.Gray, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 32.dp))
 
