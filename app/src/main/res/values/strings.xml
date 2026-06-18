@@ -19,7 +19,6 @@
     <string name="apps_count">Apps: %1$d</string>
     <string name="tab_user">User (%1$d)</string>
     <string name="tab_system">System (%1$d)</string>
-    <string name="tab_history">History</string>
     <string name="history_empty">No Apps Uninstalled Yet</string>
     <string name="action_clear_history">Clear History</string>
     
@@ -52,17 +51,9 @@
     <string name="state_found">FOUND</string>
     <string name="state_scan_retry">Try scanning again or check permissions.</string>
     <string name="action_scan_again">SCAN AGAIN</string>
-    
-    <string name="title_surgical">SURGICAL </string>
-    <string name="title_clean">CLEAN</string>
+
     <string name="status_complete">COMPLETE</string>
-    
-    <string name="title_analysis">ANALYSIS </string>
-    <string name="title_result">RESULT</string>
-    <string name="cleanup_ready">Surgical cleanup ready to reclaim</string>
-    <string name="cleanup_zones">from %1$d cached zones</string>
-    <string name="action_clean_now">CLEAN NOW</string>
-    <string name="action_discard">DISCARD</string>
+
     <string name="title_surgery">SURGERY </string>
     <string name="device_optimized">Your device is now optimized.</string>
     <string name="action_done">DONE</string>
@@ -97,11 +88,6 @@
     
     <string name="permission_allowed">Allowed</string>
     <string name="state_surgical_scan">Surgical Scan…</string>
-    <string name="state_surgical_removal">Surgical Removal: %1$s…</string>
-    <string name="notif_channel_name">APK Extraction</string>
-    <string name="notif_channel_desc">Notifies when an APK backup is complete</string>
-    <string name="notif_title_extracted">Extracted %1$s</string>
-    <string name="notif_desc_extracted">Saved to %1$s</string>
     <string name="toast_extracted">Extracted to: %1$s</string>
     <string name="notif_bundle_complete">📦 Bundle Backup Complete</string>
     <string name="notif_apk_complete">✅ APK Extraction Complete</string>
@@ -110,6 +96,7 @@
     <string name="notif_bundle_big">%1$s backed up as an App Bundle (.apks). This contains multiple split APKs.\n\nSaved to:\n%2$s</string>
     <string name="notif_apk_big">%1$s backed up successfully.\n\nSaved to:\n%2$s</string>
     <string name="state_analyzing_buffers">Analyzing system buffers…</string>
+    <string name="state_scanning_shredder">Scanning for duplicates &amp; large files…</string>
     <string name="toast_extract_fail">Extraction Failed: %1$s</string>
     <string name="permission_allow">Allow</string>
     <string name="info_never">Never</string>
@@ -138,7 +125,6 @@
     <string name="paywall_per_month">/ month</string>
     <string name="paywall_per_year">/ year</string>
     <string name="paywall_one_time"> one-time</string>
-    <string name="paywall_badge_yearly">SAVE 44%</string>
     <string name="paywall_badge_lifetime">BEST VALUE</string>
     <string name="paywall_action_subscribe">Subscribe Now</string>
     <string name="paywall_action_restore">Restore Purchases</string>
@@ -149,5 +135,4 @@
     <string name="status_free">FREE</string>
     <string name="settings_premium_title">Upgrade to Premium</string>
     <string name="settings_premium_desc">Remove ads &amp; unlock all features</string>
-    <string name="settings_premium_action">GO PREMIUM</string>
 </resources>

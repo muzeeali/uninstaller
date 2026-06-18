@@ -29,6 +29,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -56,7 +59,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -168,12 +174,22 @@ class MainActivity : ComponentActivity() {
         
         AdManager.initialize(this)
         BillingManager.initialize(this)
+        FeatureFlags.initialize()
         viewModel = ViewModelProvider(this)[AppViewModel::class.java]
 
         // Initialize Update Manager
         updateManager = UpdateManager(this)
         ratingManager = RatingManager(this)
         ratingManager.initializeFirstLaunch()
+
+        // Fetch and log Firebase Cloud Messaging Token for testing
+        com.google.firebase.messaging.FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+            if (task.isSuccessful) {
+                Logger.d("MainActivity", "FCM Registration Token: ${task.result}")
+            } else {
+                Logger.w("MainActivity", "Fetching FCM registration token failed: ${task.exception?.message}")
+            }
+        }
 
         val filter = IntentFilter(Intent.ACTION_PACKAGE_REMOVED).apply {
             addDataScheme("package")
@@ -391,6 +407,102 @@ class MainActivity : ComponentActivity() {
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow<AppUiState>(AppUiState.Loading)
     val uiState: StateFlow<AppUiState> = _uiState
+
+    val largeScanPromptEvent = kotlinx.coroutines.flow.MutableSharedFlow<Unit>()
+    private var scanDeferred: kotlinx.coroutines.CompletableDeferred<Boolean>? = null
+
+    fun resumeScan(continueAll: Boolean) {
+        scanDeferred?.complete(continueAll)
+    }
+
+    fun toggleCacheItem(file: java.io.File) {
+        val currentState = _uiState.value
+        if (currentState is AppUiState.ShredderReady) {
+            val newCacheItems = currentState.result.cacheItems.map {
+                if (it.file == file) it.copy(isSelected = !it.isSelected) else it
+            }
+            _uiState.value = AppUiState.ShredderReady(currentState.result.copy(cacheItems = newCacheItems))
+        }
+    }
+
+    fun toggleDuplicateFile(file: java.io.File) {
+        val currentState = _uiState.value
+        if (currentState is AppUiState.ShredderReady) {
+            val newGroups = currentState.result.duplicateGroups.map { group ->
+                if (group.files.any { it.file == file }) {
+                    val newFiles = group.files.map {
+                        if (it.file == file) it.copy(isSelected = !it.isSelected) else it
+                    }
+                    group.copy(files = newFiles)
+                } else {
+                    group
+                }
+            }
+            _uiState.value = AppUiState.ShredderReady(currentState.result.copy(duplicateGroups = newGroups))
+        }
+    }
+
+    fun toggleLargeFile(file: java.io.File) {
+        val currentState = _uiState.value
+        if (currentState is AppUiState.ShredderReady) {
+            val newLargeFiles = currentState.result.largeFiles.map {
+                if (it.file == file) it.copy(isSelected = !it.isSelected) else it
+            }
+            _uiState.value = AppUiState.ShredderReady(currentState.result.copy(largeFiles = newLargeFiles))
+        }
+    }
+
+    fun selectAllCache(select: Boolean) {
+        val currentState = _uiState.value
+        if (currentState is AppUiState.ShredderReady) {
+            val newCache = currentState.result.cacheItems.map { it.copy(isSelected = select) }
+            _uiState.value = AppUiState.ShredderReady(currentState.result.copy(cacheItems = newCache))
+        }
+    }
+
+    fun selectAllDuplicates(select: Boolean) {
+        val currentState = _uiState.value
+        if (currentState is AppUiState.ShredderReady) {
+            val newGroups = currentState.result.duplicateGroups.map { group ->
+                val newFiles = group.files.mapIndexed { idx, it ->
+                    if (select) {
+                        it.copy(isSelected = (idx > 0))
+                    } else {
+                        it.copy(isSelected = false)
+                    }
+                }
+                group.copy(files = newFiles)
+            }
+            _uiState.value = AppUiState.ShredderReady(currentState.result.copy(duplicateGroups = newGroups))
+        }
+    }
+    private val _largeFileThreshold = MutableStateFlow(50L * 1024 * 1024) // 50MB default
+    val largeFileThreshold: kotlinx.coroutines.flow.StateFlow<Long> = _largeFileThreshold
+
+    fun setLargeFileThreshold(bytes: Long) {
+        _largeFileThreshold.value = bytes
+        val currentState = _uiState.value
+        if (currentState is AppUiState.ShredderReady) {
+            val resetLarge = currentState.result.largeFiles.map { it.copy(isSelected = false) }
+            _uiState.value = AppUiState.ShredderReady(currentState.result.copy(largeFiles = resetLarge))
+        }
+    }
+
+    fun selectAllLargeFiles(select: Boolean) {
+        val currentState = _uiState.value
+        val threshold = _largeFileThreshold.value
+        if (currentState is AppUiState.ShredderReady) {
+            val newLarge = currentState.result.largeFiles.map {
+                // Use pre-stored size to avoid disk I/O on the main thread
+                if (it.size >= threshold) {
+                    it.copy(isSelected = select)
+                } else {
+                    it
+                }
+            }
+            _uiState.value = AppUiState.ShredderReady(currentState.result.copy(largeFiles = newLarge))
+        }
+    }
 
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing
@@ -660,67 +772,106 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         })
     }
 
+    private fun getMD5OfFirstMB(file: File): String {
+        return try {
+            val digest = java.security.MessageDigest.getInstance("MD5")
+            val buffer = ByteArray(1024 * 1024)
+            java.io.FileInputStream(file).use { fis ->
+                val bytesRead = fis.read(buffer)
+                if (bytesRead > 0) {
+                    digest.update(buffer, 0, bytesRead)
+                }
+            }
+            val messageDigest = digest.digest()
+            val hexString = StringBuilder()
+            for (aMessageDigest in messageDigest) {
+                var h = Integer.toHexString(0xFF and aMessageDigest.toInt())
+                while (h.length < 2) h = "0" + h
+                hexString.append(h)
+            }
+            hexString.toString()
+        } catch (e: Exception) {
+            file.absolutePath
+        }
+    }
+
+    private fun isTargetFileType(file: File): Boolean {
+        val ext = file.extension.lowercase()
+        return ext in setOf(
+            "jpg", "jpeg", "png", "gif", "webp", "bmp",
+            "mp4", "mkv", "avi", "3gp", "webm", "mov",
+            "mp3", "wav", "ogg", "m4a", "flac",
+            "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf",
+            "apk"
+        )
+    }
+
     fun startDeepClean() {
         viewModelScope.launch(Dispatchers.IO) {
             val app = getApplication<Application>()
-            _uiState.emit(AppUiState.Scanning(0f, app.getString(R.string.state_analyzing_buffers)))
-            
+
+            // ── Phase 1: Analyzing root shadow folders (0%→10%) ──────────────────
+            _uiState.emit(AppUiState.Scanning(0.02f, app.getString(R.string.state_analyzing_buffers)))
+
             val junkFiles = mutableListOf<File>()
             var totalBytes = 0L
             val pm = getApplication<Application>().packageManager
             val installedPackageNames = pm.getInstalledApplications(0).map { it.packageName }.toSet()
             val externalRoot = Environment.getExternalStorageDirectory()
 
-            // 1. Root-Level "App Shadow" Folders (Optimized)
-            // Fast scan of the root for leftovers
-            externalRoot.listFiles()?.filter { it.isDirectory }?.forEach { file ->
+            val rootDirs = externalRoot.listFiles()?.filter { it.isDirectory } ?: emptyList()
+            rootDirs.forEachIndexed { idx, file ->
                 val name = file.name.lowercase()
                 if (name.startsWith("com.") || name.startsWith("org.") || name.startsWith("net.") || name.startsWith(".")) {
                     if (!installedPackageNames.contains(name) && !listOf(".android", ".thumbnails").contains(name)) {
                         val size = calculateFolderSize(file)
-                        if (size > 0) {
-                            synchronized(junkFiles) { junkFiles.add(file); totalBytes += size }
-                        }
+                        if (size > 0) synchronized(junkFiles) { junkFiles.add(file); totalBytes += size }
                     }
+                }
+                // Progress 2%→10%
+                if (idx % 5 == 0) {
+                    val p = 0.02f + (idx.toFloat() / rootDirs.size.coerceAtLeast(1)) * 0.08f
+                    _uiState.emit(AppUiState.Scanning(p, app.getString(R.string.state_analyzing_buffers)))
                 }
             }
 
-            // 2. High-Yield Junk Targets (Direct Jump)
+            // ── Phase 2: High-yield junk paths (10%→15%) ─────────────────────────
+            _uiState.emit(AppUiState.Scanning(0.10f, app.getString(R.string.state_analyzing_buffers)))
             val globalJunkPaths = listOf(
-                "DCIM/.thumbnails", "Pictures/.thumbnails", ".thumbnails", "LOST.DIR", 
+                "DCIM/.thumbnails", "Pictures/.thumbnails", ".thumbnails", "LOST.DIR",
                 "Telegram/Telegram Images/cache", "Telegram/Telegram Video/cache",
                 "MIUI/debug_log", "Download/.tmp"
             )
-            globalJunkPaths.forEach { path ->
+            globalJunkPaths.forEachIndexed { idx, path ->
                 val target = File(externalRoot, path)
                 if (target.exists()) {
                     val size = calculateFolderSize(target)
-                    if (size > 0) {
-                        synchronized(junkFiles) { junkFiles.add(target); totalBytes += size }
-                    }
+                    if (size > 0) synchronized(junkFiles) { junkFiles.add(target); totalBytes += size }
                 }
+                val p = 0.10f + (idx.toFloat() / globalJunkPaths.size) * 0.05f
+                _uiState.emit(AppUiState.Scanning(p, app.getString(R.string.state_analyzing_buffers)))
             }
 
-            // 3. Android Data Clean (Streamlined for Speed)
+            // ── Phase 3: Android/data and Android/obb scan (15%→35%) ─────────────
+            _uiState.emit(AppUiState.Scanning(0.15f, app.getString(R.string.state_surgical_scan)))
             val dataRoots = listOf("Android/data", "Android/obb")
-            dataRoots.forEach { rootPath ->
+            dataRoots.forEachIndexed { rootIdx, rootPath ->
                 val rootDir = File(externalRoot, rootPath)
                 if (rootDir.exists()) {
                     val apps = rootDir.listFiles()?.filter { it.isDirectory } ?: emptyList()
                     val totalApps = apps.size
-                    
                     apps.forEachIndexed { index, appDir ->
-                        if (index % 30 == 0) {
-                            _uiState.emit(AppUiState.Scanning(0.4f + (index.toFloat()/totalApps.coerceAtLeast(1))*0.5f, getApplication<Application>().getString(R.string.state_surgical_scan)))
+                        if (index % 10 == 0) {
+                            // Phase 3 spans 15%→35%; split across the two data roots
+                            val rootOffset = rootIdx * 0.10f
+                            val p = 0.15f + rootOffset + (index.toFloat() / totalApps.coerceAtLeast(1)) * 0.10f
+                            _uiState.emit(AppUiState.Scanning(p, app.getString(R.string.state_surgical_scan)))
                         }
-                        
                         if (!installedPackageNames.contains(appDir.name)) {
                             val size = calculateFolderSize(appDir)
                             if (size > 0) synchronized(junkFiles) { junkFiles.add(appDir); totalBytes += size }
                         } else {
-                            // FAST targeted cache scan
-                            val commonCacheFolders = listOf("cache", ".cache", "code_cache")
-                            commonCacheFolders.forEach { cName ->
+                            listOf("cache", ".cache", "code_cache").forEach { cName ->
                                 val target = File(appDir, cName)
                                 if (target.exists()) {
                                     val size = calculateFolderSize(target)
@@ -732,24 +883,111 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            _uiState.emit(AppUiState.CleanSummary(formatSize(totalBytes), junkFiles.size))
-            discoveredJunk = junkFiles
+            // ── Phase 4: Walk external storage for target file types (35%→60%) ───
+            _uiState.emit(AppUiState.Scanning(0.35f, app.getString(R.string.state_scanning_shredder)))
+
+            val allFiles = mutableListOf<File>()
+            var scannedCount = 0
+            val promptDeferred = kotlinx.coroutines.CompletableDeferred<Boolean>().also { scanDeferred = it }
+            var continueWalk = true
+
+            externalRoot.walkTopDown()
+                .onEnter { dir ->
+                    val name = dir.name
+                    !name.startsWith(".") && !name.equals("Android", ignoreCase = true)
+                }
+                .forEach { file ->
+                    if (!continueWalk) return@forEach
+                    if (file.isFile) {
+                        scannedCount++
+                        // Emit every 200 files; cap walk at 10k without user approval
+                        if (scannedCount % 200 == 0) {
+                            // 35%→58%, capped at 10k files = 100% of this phase
+                            val walkProgress = (scannedCount.toFloat() / 10000f).coerceAtMost(1f)
+                            val p = 0.35f + walkProgress * 0.23f
+                            _uiState.emit(AppUiState.Scanning(p, app.getString(R.string.state_scanning_shredder)))
+                        }
+                        if (scannedCount == 10000) {
+                            viewModelScope.launch(Dispatchers.Main) { largeScanPromptEvent.emit(Unit) }
+                            val continueAll = kotlinx.coroutines.runBlocking { promptDeferred.await() }
+                            if (!continueAll) { continueWalk = false; return@forEach }
+                        }
+                        if (isTargetFileType(file)) allFiles.add(file)
+                    }
+                }
+
+            // ── Phase 5: Build large files list (60%→65%) ────────────────────────
+            _uiState.emit(AppUiState.Scanning(0.60f, "Indexing large files…"))
+            val largeFilesList = allFiles
+                .filter { it.length() >= 10 * 1024 * 1024 }
+                .map { LargeFileItem(file = it, size = it.length(), isSelected = false) }
+
+            // ── Phase 6: Duplicate hashing (65%→90%) ─────────────────────────────
+            _uiState.emit(AppUiState.Scanning(0.65f, "Finding duplicates…"))
+            val duplicateGroupsList = mutableListOf<DuplicateGroup>()
+            val sizeGroups = allFiles.groupBy { it.length() }.filter { it.key > 0 && it.value.size > 1 }
+            val sizeGroupList = sizeGroups.entries.toList()
+            sizeGroupList.forEachIndexed { groupIdx, (fileSize, filesWithSize) ->
+                val md5Groups = filesWithSize.groupBy { getMD5OfFirstMB(it) }
+                md5Groups.forEach { (_, duplicatesList) ->
+                    if (duplicatesList.size > 1) {
+                        val sorted = duplicatesList.sortedBy { it.lastModified() }
+                        val dupFiles = sorted.mapIndexed { index, file ->
+                            DuplicateFile(file = file, size = fileSize, isSelected = (index > 0))
+                        }
+                        duplicateGroupsList.add(DuplicateGroup(files = dupFiles, fileSize = fileSize))
+                    }
+                }
+                // Emit every 20 groups
+                if (groupIdx % 20 == 0) {
+                    val p = 0.65f + (groupIdx.toFloat() / sizeGroupList.size.coerceAtLeast(1)) * 0.25f
+                    _uiState.emit(AppUiState.Scanning(p, "Finding duplicates…"))
+                }
+            }
+
+            // ── Phase 7: Calculate cache folder sizes (90%→99%) ──────────────────
+            _uiState.emit(AppUiState.Scanning(0.90f, "Calculating cache sizes…"))
+            val cacheItemsList = junkFiles.mapIndexed { idx, file ->
+                if (idx % 5 == 0) {
+                    val p = 0.90f + (idx.toFloat() / junkFiles.size.coerceAtLeast(1)) * 0.09f
+                    _uiState.emit(AppUiState.Scanning(p, "Calculating cache sizes…"))
+                }
+                CacheItem(file = file, size = calculateFolderSize(file), isSelected = true)
+            }
+
+            // ── Phase 8: Done — emit 100% briefly then show results ───────────────
+            _uiState.emit(AppUiState.Scanning(1.0f, "Scan complete!"))
+            kotlinx.coroutines.delay(400) // Brief pause so user sees 100%
+            _uiState.emit(
+                AppUiState.ShredderReady(
+                    ShredderResult(
+                        cacheItems = cacheItemsList,
+                        duplicateGroups = duplicateGroupsList,
+                        largeFiles = largeFilesList
+                    )
+                )
+            )
         }
     }
 
     fun performCleanup(haptics: androidx.compose.ui.hapticfeedback.HapticFeedback? = null) {
+        val currentState = _uiState.value
+        if (currentState !is AppUiState.ShredderReady) return
+
         viewModelScope.launch(Dispatchers.IO) {
             haptics?.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
 
-            // Show the 100% Optimized screen immediately — don't make the user
-            // watch a file-deletion progress bar. Deletion runs silently below.
-            val filesToDelete = discoveredJunk.toList()
-            discoveredJunk = emptyList()
+            val result = currentState.result
             _uiState.emit(AppUiState.CleanFinished)
+            ThumbnailCache.clear()
 
-            // Delete files in the background while the finished screen is visible.
-            // refreshList() is intentionally NOT called here — it would overwrite
-            // CleanFinished with Loading/Success before the user taps DONE.
+            val filesToDelete = mutableListOf<File>()
+            result.cacheItems.filter { it.isSelected }.forEach { filesToDelete.add(it.file) }
+            result.duplicateGroups.forEach { group ->
+                group.files.forEach { if (it.isSelected) filesToDelete.add(it.file) }
+            }
+            result.largeFiles.filter { it.isSelected }.forEach { filesToDelete.add(it.file) }
+
             filesToDelete.forEach { file ->
                 try {
                     if (file.isDirectory) file.deleteRecursively() else file.delete()
@@ -769,6 +1007,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun backToHome() {
+        ThumbnailCache.clear()
         // Always force a fresh reload so storage stats reflect any cleanup that ran.
         loadApps(force = true)
     }
@@ -1071,9 +1310,20 @@ sealed class AppUiState {
     object Empty : AppUiState()
     data class Success(val apps: List<AppInfo>, val storage: StorageInfo) : AppUiState()
     data class Scanning(val progress: Float, val currentTask: String) : AppUiState()
-    data class CleanSummary(val spaceFound: String, val itemsCount: Int) : AppUiState()
+    data class ShredderReady(val result: ShredderResult) : AppUiState()
     object CleanFinished : AppUiState()
 }
+
+data class CacheItem(val file: java.io.File, val size: Long, val isSelected: Boolean = true)
+data class DuplicateFile(val file: java.io.File, val size: Long = 0L, val isSelected: Boolean = false)
+data class DuplicateGroup(val files: List<DuplicateFile>, val fileSize: Long = 0L)
+data class LargeFileItem(val file: java.io.File, val size: Long = 0L, val isSelected: Boolean = false)
+
+data class ShredderResult(
+    val cacheItems: List<CacheItem>,
+    val duplicateGroups: List<DuplicateGroup>,
+    val largeFiles: List<LargeFileItem>
+)
 
 data class StorageInfo(
     val free: String,
@@ -1461,6 +1711,14 @@ fun UninstallerApp(
         }
     }
 
+    var showLargeScanPrompt by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        viewModel.largeScanPromptEvent.collect {
+            showLargeScanPrompt = true
+        }
+    }
+
     // ── Update System States ────────────────────────────────────────────────
     var showUpdateDialog by remember { mutableStateOf(false) }
     var updateUrl by remember { mutableStateOf("") }
@@ -1519,7 +1777,7 @@ fun UninstallerApp(
             }
         },
         topBar = {
-            if (currentUiState !is AppUiState.Scanning && currentUiState !is AppUiState.CleanSummary) {
+            if (currentUiState !is AppUiState.Scanning && currentUiState !is AppUiState.ShredderReady) {
                 UninstallerTopBar(
                     title = when (currentScreen) {
                         "home" -> "UNINSTALLER"
@@ -1536,24 +1794,29 @@ fun UninstallerApp(
                     isPremium = isPremium,
                     // Home: Refresh + History | Settings: Share + History | History: Refresh + Settings
                     onRefresh = when (currentScreen) {
-                        "home" -> {{
-                            viewModel.refreshList()
-                            // AdManager.onHomeRefreshTapped() is correctly called in HomeScreen's PullToRefresh
-                        }}
-                        "history" -> {{ 
-                            viewModel.refreshHistory()
-                        }}
+                        "home" -> {
+                            {
+                                viewModel.refreshList()
+                            }
+                        }
+                        "history" -> {
+                            { 
+                                viewModel.refreshHistory()
+                            }
+                        }
                         else -> null
                     },
-                    onShareApp = if (currentScreen == "settings") {{
-                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            val contextPackage = context.packageName
-                            putExtra(Intent.EXTRA_TEXT, context.getString(R.string.share_app_text, contextPackage))
+                    onShareApp = if (currentScreen == "settings") {
+                        {
+                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                val contextPackage = context.packageName
+                                putExtra(Intent.EXTRA_TEXT, context.getString(R.string.share_app_text, contextPackage))
+                            }
+                            context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.item_share)))
                         }
-                        context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.item_share)))
-                    }} else null,
-                    onSettingsNav = if (currentScreen == "history") {{ currentScreen = "settings" }} else null,
+                    } else null,
+                    onSettingsNav = if (currentScreen == "history") { { currentScreen = "settings" } } else null,
                     onHistory = if (currentScreen != "history") {
                         {
                             if (isPremium) {
@@ -1573,11 +1836,16 @@ fun UninstallerApp(
                 is AppUiState.Loading -> LoadingScreen()
                 is AppUiState.Empty -> EmptyStateScreen { viewModel.refreshList() }
                 is AppUiState.Scanning -> DeepCleanProgressScreen(state.progress, state.currentTask)
-                is AppUiState.CleanSummary -> CleanupSummaryScreen(
-                    space = state.spaceFound, 
-                    itemsCount = state.itemsCount,
+                is AppUiState.ShredderReady -> ShredderScreen(
+                    result = state.result,
+                    viewModel = viewModel,
+                    isPremium = isPremium,
                     onClean = { viewModel.performCleanup(haptics) },
-                    onCancel = { viewModel.backToHome() }
+                    onCancel = { viewModel.backToHome() },
+                    onShowPaywall = {
+                        paywallSource = "shredder"
+                        showPaywall = true
+                    }
                 )
                 is AppUiState.CleanFinished -> {
                     val activity = context.findActivity() as? MainActivity
@@ -1760,6 +2028,50 @@ fun UninstallerApp(
                     prefs.edit().putString("paywall_last_shown_date", today).apply()
                     if (paywallSource == "history") currentScreen = "history"
                 }
+            )
+        }
+        if (showLargeScanPrompt) {
+            AlertDialog(
+                onDismissRequest = {
+                    showLargeScanPrompt = false
+                    viewModel.resumeScan(false)
+                },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Info, contentDescription = "Scan Warning", tint = EmeraldGreen)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Large Library Scan", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                },
+                text = {
+                    Text(
+                        "You have a large storage library (>10,000 files). Scanning all files for duplicates and large sizes may take some time. Would you like to continue scanning all files or process the files scanned so far?",
+                        color = Color.LightGray
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showLargeScanPrompt = false
+                            viewModel.resumeScan(true)
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen)
+                    ) {
+                        Text("Continue Full Scan", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            showLargeScanPrompt = false
+                            viewModel.resumeScan(false)
+                        }
+                    ) {
+                        Text("Stop Here", color = Color.Gray)
+                    }
+                },
+                containerColor = Charcoal,
+                shape = RoundedCornerShape(16.dp)
             )
         }
     }
@@ -2801,6 +3113,14 @@ fun BulkActionBar(count: Int, reclaimedSpace: String, isAdUnlocked: Boolean, onU
 
 @Composable
 fun DeepCleanProgressScreen(progress: Float, currentTask: String) {
+    // Animate progress smoothly between emitted values so the circle never jumps
+    val animatedProgress by animateFloatAsState(
+        targetValue = progress,
+        animationSpec = androidx.compose.animation.core.tween(durationMillis = 350),
+        label = "scanProgress"
+    )
+    val displayPercent = (animatedProgress * 100).toInt()
+
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Row {
@@ -2808,26 +3128,31 @@ fun DeepCleanProgressScreen(progress: Float, currentTask: String) {
                 Text("CLEAN", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = EmeraldGreen)
             }
             Text(currentTask, color = Color.Gray, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 32.dp))
-            
+
             Spacer(modifier = Modifier.height(64.dp))
-            
+
             Box(contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(
-                    progress = { progress },
+                    progress = { animatedProgress },
                     modifier = Modifier.size(200.dp),
                     color = EmeraldGreen,
                     strokeWidth = 12.dp,
                     trackColor = LogoPurple.copy(alpha = 0.1f)
                 )
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("${(progress * 100).toInt()}%", fontSize = 48.sp, fontWeight = FontWeight.Black, color = LogoPurple)
+                    Text(
+                        text = "$displayPercent%",
+                        fontSize = 48.sp,
+                        fontWeight = FontWeight.Black,
+                        color = LogoPurple
+                    )
                     Text("COMPLETE", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = EmeraldGreen, letterSpacing = 2.sp)
                 }
             }
-            
+
             Spacer(modifier = Modifier.height(48.dp))
             LinearProgressIndicator(
-                progress = { progress },
+                progress = { animatedProgress },
                 modifier = Modifier.fillMaxWidth(0.7f).height(6.dp).clip(RoundedCornerShape(3.dp)),
                 color = EmeraldGreen,
                 trackColor = LogoPurple.copy(alpha = 0.1f)
@@ -2842,197 +3167,1161 @@ fun DeepCleanProgressScreen(progress: Float, currentTask: String) {
     }
 }
 
+object ThumbnailCache {
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, Any>()
+    fun get(key: String): Any? = cache[key]
+    fun put(key: String, value: Any) {
+        if (cache.size < 500) cache[key] = value
+    }
+    fun clear() = cache.clear()
+}
+
+val eyeIcon: ImageVector
+    get() = ImageVector.Builder(
+        name = "eye",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).path(
+        fill = SolidColor(Color.White),
+        strokeLineWidth = 0f
+    ) {
+        moveTo(12f, 4.5f)
+        curveTo(7f, 4.5f, 2.73f, 7.61f, 1f, 12f)
+        curveTo(2.73f, 16.39f, 7f, 19.5f, 12f, 19.5f)
+        curveTo(17f, 19.5f, 21.27f, 16.39f, 23f, 12f)
+        curveTo(21.27f, 7.61f, 17f, 4.5f, 12f, 4.5f)
+        close()
+        moveTo(12f, 17f)
+        curveTo(9.24f, 17f, 7f, 14.76f, 7f, 12f)
+        curveTo(7f, 9.24f, 9.24f, 7f, 12f, 7f)
+        curveTo(14.76f, 7f, 17f, 9.24f, 17f, 12f)
+        curveTo(17f, 14.76f, 14.76f, 17f, 12f, 17f)
+        close()
+        moveTo(12f, 9f)
+        curveTo(10.34f, 9f, 9f, 10.34f, 9f, 12f)
+        curveTo(9f, 13.66f, 10.34f, 15f, 12f, 15f)
+        curveTo(13.66f, 15f, 15f, 13.66f, 15f, 12f)
+        curveTo(15f, 10.34f, 13.66f, 9f, 12f, 9f)
+        close()
+    }.build()
+
+private fun getMimeType(file: java.io.File): String {
+    val extension = file.extension.lowercase()
+    return android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: "*/*"
+}
+
+fun openFile(context: android.content.Context, file: java.io.File) {
+    try {
+        val authority = "${context.packageName}.provider"
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, authority, file)
+        val mimeType = context.contentResolver.getType(uri) ?: getMimeType(file)
+        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mimeType)
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(android.content.Intent.createChooser(intent, "Open file with"))
+    } catch (e: Exception) {
+        android.widget.Toast.makeText(context, "No application found to open this file", android.widget.Toast.LENGTH_SHORT).show()
+    }
+}
+
 @Composable
-fun CleanupSummaryScreen(space: String, itemsCount: Int, onClean: () -> Unit, onCancel: () -> Unit) {
-    val configuration = LocalConfiguration.current
-    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-    
-    Box(modifier = Modifier.fillMaxSize()) {
-        val context = LocalContext.current
-        val activity = remember(context) { context.findActivity() as? MainActivity }
-        
-        if (isLandscape) {
-            // ── LANDSCAPE COMPACT LAYOUT ──────────────────────────────────────────
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(24.dp)
-            ) {
-                if (itemsCount == 0) {
-                    // Optimized Left
-                    Column(
-                        modifier = Modifier.weight(0.35f),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-                        val scale by infiniteTransition.animateFloat(
-                            initialValue = 1f, targetValue = 1.08f,
-                            animationSpec = infiniteRepeatable(
-                                animation = tween(900, easing = FastOutSlowInEasing),
-                                repeatMode = RepeatMode.Reverse
-                            ),
-                            label = "scale"
-                        )
-                        Surface(
-                            shape = CircleShape,
-                            color = EmeraldGreen.copy(alpha = 0.12f),
-                            modifier = Modifier.size(80.dp).graphicsLayer(scaleX = scale, scaleY = scale)
-                        ) {
-                            Icon(Icons.Default.CheckCircle, null, Modifier.padding(16.dp), tint = EmeraldGreen)
-                        }
-                    }
-                    // Optimized Right
-                    Column(
-                        modifier = Modifier.weight(0.65f),
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Text("100%", fontSize = 44.sp, fontWeight = FontWeight.Black, color = EmeraldGreen)
-                        Text("OPTIMIZED", fontSize = 12.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 2.sp)
-                        Text(
-                            "Your device is clean. No junk files found.",
-                            color = Color.Gray,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Button(
-                            onClick = {
-                                onCancel()
-                                AdManager.onOptimizedScreenDone(onDismiss = { activity?.showActionRatingPrompt() })
-                            },
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = LogoPurple),
-                            shape = RoundedCornerShape(16.dp)
-                        ) {
-                            Text("DONE", fontWeight = FontWeight.Black, fontSize = 16.sp)
-                        }
-                    }
-                } else {
-                    // Analysis Left
-                    Column(
-                        modifier = Modifier.weight(0.35f),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Surface(shape = CircleShape, color = LogoPurple.copy(alpha = 0.1f), modifier = Modifier.size(70.dp)) {
-                            Icon(Icons.Default.Info, null, Modifier.padding(14.dp), tint = EmeraldGreen)
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(space, fontSize = 32.sp, fontWeight = FontWeight.Black, color = LogoPurple)
-                    }
-                    // Analysis Right
-                    Column(
-                        modifier = Modifier.weight(0.65f),
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Text("ANALYSIS RESULT", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black, color = EmeraldGreen)
-                        Text("Ready to reclaim from $itemsCount zones", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Button(
-                            onClick = onClean,
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text("CLEAN NOW", fontWeight = FontWeight.Black, fontSize = 18.sp)
-                        }
-                        TextButton(onClick = { onCancel() }) {
-                            Text("DISCARD", color = Color.Gray.copy(alpha = 0.6f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
-                    }
-                }
-            }
-        } else {
-            // ── PORTRAIT LAYOUT (Existing) ────────────────────────────────────────
-            if (itemsCount == 0) {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .padding(32.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-                    val scale by infiniteTransition.animateFloat(
-                        initialValue = 1f, targetValue = 1.08f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(900, easing = FastOutSlowInEasing),
-                            repeatMode = RepeatMode.Reverse
-                        ),
-                        label = "scale"
-                    )
-                    Surface(
-                        shape = CircleShape,
-                        color = EmeraldGreen.copy(alpha = 0.12f),
-                        modifier = Modifier.size(130.dp).graphicsLayer(scaleX = scale, scaleY = scale)
-                    ) {
-                        Icon(Icons.Default.CheckCircle, null, Modifier.padding(26.dp), tint = EmeraldGreen)
-                    }
-                    Spacer(modifier = Modifier.height(28.dp))
-                    Text("100%", fontSize = 64.sp, fontWeight = FontWeight.Black, color = EmeraldGreen)
-                    Text("OPTIMIZED", fontSize = 14.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 3.sp)
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        "Your device is already clean.\nNo junk files were found.",
-                        color = Color.Gray,
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Spacer(modifier = Modifier.height(36.dp))
-                    Button(
-                        onClick = {
-                            onCancel()
-                            AdManager.onOptimizedScreenDone(onDismiss = { activity?.showActionRatingPrompt() })
-                        },
-                        modifier = Modifier.fillMaxWidth().height(60.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = LogoPurple),
-                        shape = RoundedCornerShape(20.dp),
-                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp)
-                    ) {
-                        Text("DONE", fontWeight = FontWeight.Black, fontSize = 18.sp, letterSpacing = 2.sp)
-                    }
-                }
-            } else {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .padding(32.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Surface(shape = CircleShape, color = LogoPurple.copy(alpha = 0.1f), modifier = Modifier.size(120.dp)) {
-                        Icon(Icons.Default.Info, null, Modifier.padding(24.dp), tint = EmeraldGreen)
-                    }
-                    Spacer(modifier = Modifier.height(32.dp))
-                    Row {
-                        Text("ANALYSIS ", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = LogoPurple)
-                        Text("RESULT", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = EmeraldGreen)
-                    }
-                    Text("Surgical cleanup ready to reclaim", color = Color.Gray)
-                    Text(space, fontSize = 56.sp, fontWeight = FontWeight.Black, color = LogoPurple)
-                    Text("from $itemsCount cached zones", style = MaterialTheme.typography.bodyMedium, color = EmeraldGreen, fontWeight = FontWeight.Bold)
+fun VideoThumbnail(file: java.io.File, modifier: Modifier = Modifier) {
+    val cached = remember(file) { ThumbnailCache.get(file.absolutePath) as? android.graphics.Bitmap }
+    var thumbnail by remember(file) { mutableStateOf(cached) }
 
-                    Spacer(modifier = Modifier.height(32.dp))
-                    Button(
-                        onClick = onClean,
-                        modifier = Modifier.fillMaxWidth().height(60.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
-                        shape = RoundedCornerShape(16.dp),
-                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 8.dp)
-                    ) {
-                        Text("CLEAN NOW", fontWeight = FontWeight.Black, fontSize = 20.sp, letterSpacing = 1.sp)
+    if (thumbnail == null) {
+        LaunchedEffect(file) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        android.media.ThumbnailUtils.createVideoThumbnail(file, android.util.Size(128, 128), null)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        android.media.ThumbnailUtils.createVideoThumbnail(file.absolutePath, android.provider.MediaStore.Video.Thumbnails.MINI_KIND)
                     }
-                    Spacer(modifier = Modifier.height(16.dp))
-                    TextButton(onClick = { onCancel() }) {
-                        Text("DISCARD", color = Color.Gray.copy(alpha = 0.6f), fontWeight = FontWeight.Bold)
-                    }
+                } catch (e: java.lang.Exception) {
+                    null
                 }
-            }
-
-            // Banner ad anchored to absolute bottom (Portrait only)
-            Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
-                BannerAdView()
+            }?.let { bitmap ->
+                ThumbnailCache.put(file.absolutePath, bitmap)
+                thumbnail = bitmap
             }
         }
     }
+
+    if (thumbnail != null) {
+        androidx.compose.foundation.Image(
+            bitmap = thumbnail!!.asImageBitmap(),
+            contentDescription = null,
+            modifier = modifier.fillMaxSize(),
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+        )
+    } else {
+        Icon(Icons.Default.PlayArrow, null, tint = EmeraldGreen)
+    }
+}
+
+@Composable
+fun ApkThumbnail(file: java.io.File, modifier: Modifier = Modifier) {
+    val cached = remember(file) { ThumbnailCache.get(file.absolutePath) as? android.graphics.drawable.Drawable }
+    var iconDrawable by remember(file) { mutableStateOf(cached) }
+    val context = LocalContext.current
+
+    if (iconDrawable == null) {
+        LaunchedEffect(file) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    val pm = context.packageManager
+                    val info = pm.getPackageArchiveInfo(file.absolutePath, 0)
+                    val appInfo = info?.applicationInfo
+                    if (appInfo != null) {
+                        appInfo.sourceDir = file.absolutePath
+                        appInfo.publicSourceDir = file.absolutePath
+                        appInfo.loadIcon(pm)
+                    } else null
+                } catch (e: java.lang.Exception) {
+                    null
+                }
+            }?.let { drawable ->
+                ThumbnailCache.put(file.absolutePath, drawable)
+                iconDrawable = drawable
+            }
+        }
+    }
+
+    if (iconDrawable != null) {
+        androidx.compose.ui.viewinterop.AndroidView(
+            factory = { ctx ->
+                android.widget.ImageView(ctx).apply {
+                    scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                    setImageDrawable(iconDrawable)
+                }
+            },
+            modifier = modifier.fillMaxSize()
+        )
+    } else {
+        Icon(Icons.Default.Settings, null, tint = EmeraldGreen)
+    }
+}
+
+@Composable
+fun AudioThumbnail(file: java.io.File, modifier: Modifier = Modifier) {
+    val cached = remember(file) { ThumbnailCache.get(file.absolutePath) as? android.graphics.Bitmap }
+    var artwork by remember(file) { mutableStateOf(cached) }
+
+    if (artwork == null) {
+        LaunchedEffect(file) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    val retriever = android.media.MediaMetadataRetriever()
+                    retriever.setDataSource(file.absolutePath)
+                    val art = retriever.embeddedPicture
+                    retriever.release()
+                    if (art != null) {
+                        android.graphics.BitmapFactory.decodeByteArray(art, 0, art.size)
+                    } else null
+                } catch (e: java.lang.Exception) {
+                    null
+                }
+            }?.let { bitmap ->
+                ThumbnailCache.put(file.absolutePath, bitmap)
+                artwork = bitmap
+            }
+        }
+    }
+
+    if (artwork != null) {
+        androidx.compose.foundation.Image(
+            bitmap = artwork!!.asImageBitmap(),
+            contentDescription = null,
+            modifier = modifier.fillMaxSize(),
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+        )
+    } else {
+        Icon(Icons.Default.PlayArrow, null, tint = EmeraldGreen)
+    }
+}
+
+@Composable
+fun FileThumbnail(file: java.io.File, modifier: Modifier = Modifier) {
+    val extension = file.extension.lowercase()
+    when {
+        extension in setOf("jpg", "jpeg", "png", "gif", "webp", "bmp") -> {
+            AsyncImage(
+                model = file,
+                contentDescription = null,
+                modifier = modifier.fillMaxSize(),
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop
+            )
+        }
+        extension in setOf("mp4", "mkv", "avi", "3gp", "webm", "mov") -> {
+            VideoThumbnail(file = file, modifier = modifier)
+        }
+        extension == "apk" -> {
+            ApkThumbnail(file = file, modifier = modifier)
+        }
+        extension in setOf("mp3", "m4a", "wav", "ogg", "flac") -> {
+            AudioThumbnail(file = file, modifier = modifier)
+        }
+        else -> {
+            Icon(Icons.Default.Info, null, tint = EmeraldGreen)
+        }
+    }
+}
+
+@Composable
+fun ShimmerBadge(text: String) {
+    val transition = rememberInfiniteTransition(label = "shimmer")
+    val translateAnim by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1000f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1500, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shimmer"
+    )
+
+    val brush = androidx.compose.ui.graphics.Brush.linearGradient(
+        colors = listOf(
+            Color(0xFFFFD700),
+            Color(0xFFFFF8DC),
+            Color(0xFFFFD700)
+        ),
+        start = androidx.compose.ui.geometry.Offset(translateAnim - 200f, 0f),
+        end = androidx.compose.ui.geometry.Offset(translateAnim, 200f)
+    )
+
+    Box(
+        modifier = Modifier
+            .background(brush, shape = RoundedCornerShape(4.dp))
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+    ) {
+        Text(
+            text = text,
+            color = Color.Black,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Black,
+            letterSpacing = 0.5.sp,
+            maxLines = 1,
+            softWrap = false
+        )
+    }
+}
+
+@Composable
+fun LockedFeatureOverlay(onUnlockClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.85f))
+            .padding(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Lock,
+                contentDescription = "Locked",
+                tint = PremiumGold,
+                modifier = Modifier.size(64.dp)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "Premium Feature",
+                color = Color.White,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Unlock the File Shredder to scan and permanently delete duplicate or large files.",
+                color = Color.LightGray,
+                textAlign = TextAlign.Center,
+                fontSize = 14.sp
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            Button(
+                onClick = onUnlockClick,
+                colors = ButtonDefaults.buttonColors(containerColor = PremiumGold),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(
+                    text = "UNLOCK NOW",
+                    color = Color.Black,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun CacheTabContent(
+    items: List<CacheItem>,
+    onToggle: (java.io.File) -> Unit,
+    onSelectAll: (Boolean) -> Unit
+) {
+    // Wrap in remember to avoid recomputing on every recomposition unrelated to items
+    val allSelected by remember(items) { derivedStateOf { items.isNotEmpty() && items.all { it.isSelected } } }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Select Cache Folders", color = Color.Gray, fontSize = 14.sp)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.clickable { onSelectAll(!allSelected) }
+            ) {
+                Text(
+                    text = if (allSelected) "Deselect All" else "Select All",
+                    color = EmeraldGreen,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Checkbox(
+                    checked = allSelected,
+                    onCheckedChange = { onSelectAll(it) },
+                    colors = CheckboxDefaults.colors(checkedColor = EmeraldGreen)
+                )
+            }
+        }
+
+        if (items.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("No cache files found", color = Color.Gray)
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Key prevents full list rebuild on selection change
+                items(items, key = { it.file.absolutePath }) { item ->
+                    val size = item.size
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Charcoal),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onToggle(item.file) }
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = item.file.name,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = item.file.absolutePath,
+                                    color = Color.Gray,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = formatSize(size),
+                                    color = EmeraldGreen,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Checkbox(
+                                checked = item.isSelected,
+                                onCheckedChange = { onToggle(item.file) },
+                                colors = CheckboxDefaults.colors(checkedColor = EmeraldGreen)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DuplicatesTabContent(
+    groups: List<DuplicateGroup>,
+    onToggle: (java.io.File) -> Unit,
+    onPreviewImage: (java.io.File) -> Unit,
+    onSelectAll: (Boolean) -> Unit
+) {
+    // Wrap in remember+derivedStateOf to avoid recomputing on every recomposition
+    val allSelected by remember(groups) {
+        derivedStateOf {
+            groups.isNotEmpty() && groups.all { group ->
+                var groupAllSelected = true
+                for (i in 1 until group.files.size) {
+                    if (!group.files[i].isSelected) {
+                        groupAllSelected = false
+                        break
+                    }
+                }
+                groupAllSelected
+            }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Select Duplicates (Oldest Kept)", color = Color.Gray, fontSize = 14.sp)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.clickable { onSelectAll(!allSelected) }
+            ) {
+                Text(
+                    text = if (allSelected) "Deselect All" else "Select All",
+                    color = EmeraldGreen,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Checkbox(
+                    checked = allSelected,
+                    onCheckedChange = { onSelectAll(it) },
+                    colors = CheckboxDefaults.colors(checkedColor = EmeraldGreen)
+                )
+            }
+        }
+
+        if (groups.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("No duplicate files found", color = Color.Gray)
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                groups.forEachIndexed { groupIndex, group ->
+                    item(key = "header_$groupIndex") {
+                        Text(
+                            text = "Group ${groupIndex + 1} (Size: ${formatSize(group.files.firstOrNull()?.file?.length() ?: 0L)})",
+                            color = Color.LightGray,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                    }
+
+                    items(group.files, key = { it.file.absolutePath }) { item ->
+                        val isImage = item.file.extension.lowercase() in setOf("jpg", "jpeg", "png", "gif", "webp", "bmp")
+                        val isVideo = item.file.extension.lowercase() in setOf("mp4", "mkv", "avi", "3gp", "webm", "mov")
+                        
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Charcoal),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onToggle(item.file) }
+                                    .padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                val context = LocalContext.current
+                                Box(
+                                    modifier = Modifier
+                                        .size(50.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color.Black.copy(alpha = 0.3f))
+                                        .clickable {
+                                            if (isImage) {
+                                                onPreviewImage(item.file)
+                                            } else {
+                                                openFile(context, item.file)
+                                            }
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Box(modifier = Modifier.fillMaxSize()) {
+                                        FileThumbnail(file = item.file)
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .padding(2.dp)
+                                                .background(Color.Black.copy(alpha = 0.6f), CircleShape)
+                                                .padding(3.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = eyeIcon,
+                                                contentDescription = "Preview Available",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(10.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.width(12.dp))
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = item.file.name,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = item.file.parentFile?.name ?: "",
+                                        color = Color.Gray,
+                                        fontSize = 11.sp,
+                                        maxLines = 1
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    val isOldest = group.files.firstOrNull()?.file == item.file
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(item.file.lastModified())),
+                                            color = Color.Gray,
+                                            fontSize = 10.sp
+                                        )
+                                        if (isOldest) {
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Box(
+                                                modifier = Modifier
+                                                    .background(EmeraldGreen.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
+                                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                                            ) {
+                                                Text("KEEP", color = EmeraldGreen, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Checkbox(
+                                    checked = item.isSelected,
+                                    onCheckedChange = { onToggle(item.file) },
+                                    colors = CheckboxDefaults.colors(checkedColor = EmeraldGreen)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun LargeFilesTabContent(
+    items: List<LargeFileItem>,
+    currentThreshold: Long,
+    onThresholdChange: (Long) -> Unit,
+    onToggle: (java.io.File) -> Unit,
+    onSelectAll: (Boolean) -> Unit,
+    onPreviewImage: (java.io.File) -> Unit
+) {
+    var sortBy by remember { mutableStateOf("Size") }
+    var isAscending by remember { mutableStateOf(false) }
+
+    // Use pre-cached .size instead of file.length() to avoid disk I/O on the main thread
+    val visibleItems = remember(items, currentThreshold, sortBy, isAscending) {
+        val filtered = items.filter { it.size >= currentThreshold }
+        when (sortBy) {
+            "Size" -> if (isAscending) filtered.sortedBy { it.size } else filtered.sortedByDescending { it.size }
+            "Date" -> if (isAscending) filtered.sortedBy { it.file.lastModified() } else filtered.sortedByDescending { it.file.lastModified() }
+            else -> if (isAscending) filtered.sortedBy { it.file.name.lowercase() } else filtered.sortedByDescending { it.file.name.lowercase() }
+        }
+    }
+    // Wrap in remember+derivedStateOf to avoid recomputing on every recomposition
+    val allSelected by remember(visibleItems) { derivedStateOf { visibleItems.isNotEmpty() && visibleItems.all { it.isSelected } } }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            var expanded by remember { mutableStateOf(false) }
+            val thresholds = listOf(
+                10L to ">= 10MB",
+                20L to ">= 20MB",
+                30L to ">= 30MB",
+                40L to ">= 40MB",
+                50L to ">= 50MB",
+                100L to ">= 100MB"
+            )
+            val currentLabel = thresholds.firstOrNull { it.first * 1024 * 1024 == currentThreshold }?.second ?: ">= 50MB"
+
+            Box {
+                Row(
+                    modifier = Modifier
+                        .clickable { expanded = true }
+                        .background(Charcoal, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(currentLabel, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(Icons.Default.ArrowDropDown, null, tint = Color.White)
+                }
+                DropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false },
+                    modifier = Modifier.background(Charcoal)
+                ) {
+                    thresholds.forEach { (mb, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label, color = Color.White) },
+                            onClick = {
+                                onThresholdChange(mb * 1024 * 1024)
+                                expanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            var sortMenuExpanded by remember { mutableStateOf(false) }
+            val sortOptions = listOf("Size", "Date", "Name")
+            val sortLabel = when (sortBy) {
+                "Size" -> if (isAscending) "Size ↑" else "Size ↓"
+                "Date" -> if (isAscending) "Oldest" else "Newest"
+                else -> if (isAscending) "Name A-Z" else "Name Z-A"
+            }
+
+            Box {
+                Row(
+                    modifier = Modifier
+                        .clickable { sortMenuExpanded = true }
+                        .background(Charcoal, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(sortLabel, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(Icons.Default.ArrowDropDown, null, tint = Color.White)
+                }
+                DropdownMenu(
+                    expanded = sortMenuExpanded,
+                    onDismissRequest = { sortMenuExpanded = false },
+                    modifier = Modifier.background(Charcoal)
+                ) {
+                    sortOptions.forEach { option ->
+                        DropdownMenuItem(
+                            text = { Text(option, color = Color.White) },
+                            onClick = {
+                                if (sortBy == option) {
+                                    isAscending = !isAscending
+                                } else {
+                                    sortBy = option
+                                    isAscending = if (option == "Name") true else false
+                                }
+                                sortMenuExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.clickable { onSelectAll(!allSelected) }
+            ) {
+                Text(
+                    text = if (allSelected) "Deselect All" else "Select All",
+                    color = EmeraldGreen,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Checkbox(
+                    checked = allSelected,
+                    onCheckedChange = { onSelectAll(it) },
+                    colors = CheckboxDefaults.colors(checkedColor = EmeraldGreen)
+                )
+            }
+        }
+
+        if (visibleItems.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("No large files found", color = Color.Gray)
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(visibleItems, key = { it.file.absolutePath }) { item ->
+                    val isImage = item.file.extension.lowercase() in setOf("jpg", "jpeg", "png", "gif", "webp", "bmp")
+                    val isVideo = item.file.extension.lowercase() in setOf("mp4", "mkv", "avi", "3gp", "webm", "mov")
+
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Charcoal),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onToggle(item.file) }
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val context = LocalContext.current
+                            Box(
+                                modifier = Modifier
+                                    .size(50.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color.Black.copy(alpha = 0.3f))
+                                    .clickable {
+                                        if (isImage) {
+                                            onPreviewImage(item.file)
+                                        } else {
+                                            openFile(context, item.file)
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    FileThumbnail(file = item.file)
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .padding(2.dp)
+                                            .background(Color.Black.copy(alpha = 0.6f), CircleShape)
+                                            .padding(3.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = eyeIcon,
+                                            contentDescription = "Preview Available",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(10.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.width(12.dp))
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = item.file.name,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = item.file.absolutePath,
+                                    color = Color.Gray,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    // Use pre-cached size instead of file.length() disk I/O
+                                    text = formatSize(item.size),
+                                    color = EmeraldGreen,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            Checkbox(
+                                checked = item.isSelected,
+                                onCheckedChange = { onToggle(item.file) },
+                                colors = CheckboxDefaults.colors(checkedColor = EmeraldGreen)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ImagePreviewDialog(file: java.io.File, onDismiss: () -> Unit) {
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+        ) {
+            var scale by remember { mutableStateOf(1f) }
+            var offset by remember { mutableStateOf(Offset.Zero) }
+            val state = rememberTransformableState { zoomChange, offsetChange, _ ->
+                scale = (scale * zoomChange).coerceIn(1f, 5f)
+                offset += offsetChange
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer(
+                        scaleX = scale,
+                        scaleY = scale,
+                        translationX = offset.x,
+                        translationY = offset.y
+                    )
+                    .transformable(state = state),
+                contentAlignment = Alignment.Center
+            ) {
+                AsyncImage(
+                    model = file,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                )
+            }
+
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(16.dp)
+                    .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+            ) {
+                Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+            }
+        }
+    }
+}
+
+@Composable
+fun ShredConfirmDialog(
+    cacheBytes: Long,
+    dupsBytes: Long,
+    largeBytes: Long,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Warning, contentDescription = "Warning", tint = Color.Red)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Confirm Permanent Shred", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "You are about to permanently shred the selected files. This action CANNOT be undone. The files will be completely deleted.",
+                    color = Color.LightGray,
+                    fontSize = 14.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("Breakdown:", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                if (cacheBytes > 0) {
+                    Text("• Cache Folders: ${formatSize(cacheBytes)}", color = Color.LightGray, fontSize = 13.sp)
+                }
+                if (dupsBytes > 0) {
+                    Text("• Duplicate Files: ${formatSize(dupsBytes)}", color = Color.LightGray, fontSize = 13.sp)
+                }
+                if (largeBytes > 0) {
+                    Text("• Large Files: ${formatSize(largeBytes)}", color = Color.LightGray, fontSize = 13.sp)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+            ) {
+                Text("SHRED FOREVER", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("CANCEL", color = Color.Gray)
+            }
+        },
+        containerColor = Charcoal,
+        shape = RoundedCornerShape(16.dp)
+    )
+}
+
+@Composable
+fun ShredderScreen(
+    result: ShredderResult,
+    viewModel: AppViewModel,
+    isPremium: Boolean,
+    onClean: () -> Unit,
+    onCancel: () -> Unit,
+    onShowPaywall: () -> Unit
+) {
+    val dupsFree by FeatureFlags.shredderDuplicatesFree.collectAsState()
+    val largeFree by FeatureFlags.shredderLargeFilesFree.collectAsState()
+    val largeFileThreshold by viewModel.largeFileThreshold.collectAsState()
+
+    val isDupsLocked = !isPremium && !dupsFree
+    val isLargeLocked = !isPremium && !largeFree
+
+    var selectedTab by remember { mutableStateOf(0) }
+    var showConfirmDialog by remember { mutableStateOf(false) }
+    var previewFile by remember { mutableStateOf<File?>(null) }
+
+    // Use remember + derivedStateOf to avoid recomputing sizes on every recomposition.
+    // Use pre-cached .size to avoid disk I/O on the main thread.
+    val selectedCacheSize by remember(result.cacheItems) {
+        derivedStateOf { result.cacheItems.filter { it.isSelected }.sumOf { it.size } }
+    }
+    val selectedDupsSize by remember(result.duplicateGroups) {
+        derivedStateOf { result.duplicateGroups.sumOf { group -> group.files.filter { it.isSelected }.sumOf { it.size } } }
+    }
+    val selectedLargeSize by remember(result.largeFiles, largeFileThreshold) {
+        derivedStateOf { result.largeFiles.filter { it.size >= largeFileThreshold && it.isSelected }.sumOf { it.size } }
+    }
+    val totalSelectedSize by remember(selectedCacheSize, selectedDupsSize, selectedLargeSize) {
+        derivedStateOf { selectedCacheSize + selectedDupsSize + selectedLargeSize }
+    }
+
+    Box(modifier = Modifier.fillMaxSize().background(DarkBackground)) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Start
+            ) {
+                IconButton(onClick = onCancel) {
+                    Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "File Shredder",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+                val showFreeBadge = !isPremium && (dupsFree || largeFree)
+                if (showFreeBadge) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    ShimmerBadge("LIMITED TIME FREE")
+                }
+            }
+
+            TabRow(
+                selectedTabIndex = selectedTab,
+                containerColor = Charcoal,
+                contentColor = Color.White,
+                indicator = { tabPositions ->
+                    with(TabRowDefaults) {
+                        TabRowDefaults.Indicator(
+                            Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
+                            color = EmeraldGreen
+                        )
+                    }
+                }
+            ) {
+                Tab(
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    text = {
+                        // Pre-compute tab label sizes once per result change using remember
+                        val cacheTotal = remember(result.cacheItems) { result.cacheItems.sumOf { it.size } }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Cache", fontWeight = FontWeight.Bold)
+                            Text(formatSize(cacheTotal), fontSize = 10.sp, color = Color.Gray)
+                        }
+                    }
+                )
+
+                Tab(
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    text = {
+                        // Use pre-cached fileSize from DuplicateGroup to avoid disk I/O
+                        val dupsTotal = remember(result.duplicateGroups) {
+                            result.duplicateGroups.sumOf { group -> group.fileSize * group.files.size }
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Duplicates", fontWeight = FontWeight.Bold)
+                                if (isDupsLocked) {
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(Icons.Default.Lock, contentDescription = "Locked", tint = PremiumGold, modifier = Modifier.size(12.dp))
+                                }
+                            }
+                            Text(formatSize(dupsTotal), fontSize = 10.sp, color = Color.Gray)
+                        }
+                    }
+                )
+
+                Tab(
+                    selected = selectedTab == 2,
+                    onClick = { selectedTab = 2 },
+                    text = {
+                        // Use pre-cached size to avoid disk I/O
+                        val largeTotal = remember(result.largeFiles, largeFileThreshold) {
+                            result.largeFiles.filter { it.size >= largeFileThreshold }.sumOf { it.size }
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Large Files", fontWeight = FontWeight.Bold)
+                                if (isLargeLocked) {
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(Icons.Default.Lock, contentDescription = "Locked", tint = PremiumGold, modifier = Modifier.size(12.dp))
+                                }
+                            }
+                            Text(formatSize(largeTotal), fontSize = 10.sp, color = Color.Gray)
+                        }
+                    }
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                when (selectedTab) {
+                    0 -> {
+                        CacheTabContent(
+                            items = result.cacheItems,
+                            onToggle = { viewModel.toggleCacheItem(it) },
+                            onSelectAll = { select -> viewModel.selectAllCache(select) }
+                        )
+                    }
+                    1 -> {
+                        if (isDupsLocked) {
+                            LockedFeatureOverlay(onUnlockClick = onShowPaywall)
+                        } else {
+                            DuplicatesTabContent(
+                                groups = result.duplicateGroups,
+                                onToggle = { viewModel.toggleDuplicateFile(it) },
+                                onPreviewImage = { previewFile = it },
+                                  onSelectAll = { select -> viewModel.selectAllDuplicates(select) }
+                            )
+                        }
+                    }
+                    2 -> {
+                        if (isLargeLocked) {
+                            LockedFeatureOverlay(onUnlockClick = onShowPaywall)
+                        } else {
+                            LargeFilesTabContent(
+                                items = result.largeFiles,
+                                currentThreshold = largeFileThreshold,
+                                onThresholdChange = { viewModel.setLargeFileThreshold(it) },
+                                onToggle = { viewModel.toggleLargeFile(it) },
+                                onSelectAll = { select -> viewModel.selectAllLargeFiles(select) },
+                                onPreviewImage = { previewFile = it }
+                            )
+                        }
+                    }
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
+                Button(
+                    onClick = {
+                        if (totalSelectedSize > 0) {
+                            showConfirmDialog = true
+                        }
+                    },
+                    enabled = totalSelectedSize > 0,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = EmeraldGreen,
+                        disabledContainerColor = EmeraldGreen.copy(alpha = 0.3f)
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = "SHRED ${formatSize(totalSelectedSize)}",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        color = Color.White
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                TextButton(
+                    onClick = onCancel,
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                ) {
+                    Text("DISCARD", color = Color.Gray, fontWeight = FontWeight.Bold)
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                BannerAdView()
+            }
+        }
+
+        previewFile?.let { file ->
+            ImagePreviewDialog(file = file, onDismiss = { previewFile = null })
+        }
+
+        if (showConfirmDialog) {
+            ShredConfirmDialog(
+                cacheBytes = selectedCacheSize,
+                dupsBytes = selectedDupsSize,
+                largeBytes = selectedLargeSize,
+                onConfirm = {
+                    showConfirmDialog = false
+                    onClean()
+                },
+                onDismiss = { showConfirmDialog = false }
+            )
+        }
+    }
+}
+
+private fun calculateFolderSize(directory: java.io.File): Long {
+    var size: Long = 0
+    try {
+        directory.walkTopDown().maxDepth(10).forEach { file ->
+            if (file.isFile) size += file.length()
+        }
+    } catch (e: Exception) {}
+    return size
 }
 
 // ─── Reusable Banner Ad Composable ──────────────────────────────────────────

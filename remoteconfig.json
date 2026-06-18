@@ -101,6 +101,18 @@
         "value": "false"
       },
       "valueType": "BOOLEAN"
+    },
+    "shredder_duplicates_free": {
+      "defaultValue": {
+        "value": "true"
+      },
+      "valueType": "BOOLEAN"
+    },
+    "shredder_large_files_free": {
+      "defaultValue": {
+        "value": "true"
+      },
+      "valueType": "BOOLEAN"
     }
   }
 }
