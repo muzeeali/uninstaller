@@ -91,6 +91,7 @@ import com.zeetech.uninstaller.bulk.apk.extractor.cleaner.ui.theme.EmeraldGreen
 import com.zeetech.uninstaller.bulk.apk.extractor.cleaner.ui.theme.LogoPurple
 import com.zeetech.uninstaller.bulk.apk.extractor.cleaner.ui.theme.UninstallerTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.delay
@@ -240,9 +241,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
         })
-
-        // Initialize Update Manager
-        updateManager = UpdateManager(this)
 
         // Automated Storage Sweep on Launch
         if (viewModel.scanOnLaunch.value && viewModel.hasAllFilesAccess()) {
@@ -573,6 +571,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     } catch (e: Exception) { 20 }
 
     private var discoveredJunk = listOf<File>()
+    private var scanJob: Job? = null
 
     init {
         loadApps()
@@ -807,7 +806,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startDeepClean() {
-        viewModelScope.launch(Dispatchers.IO) {
+        if (scanJob?.isActive == true) return
+        scanJob = viewModelScope.launch(Dispatchers.IO) {
             val app = getApplication<Application>()
 
             // ── Phase 1: Analyzing root shadow folders (0%→10%) ──────────────────
@@ -978,7 +978,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             haptics?.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
 
             val result = currentState.result
-            _uiState.emit(AppUiState.CleanFinished)
             ThumbnailCache.clear()
 
             val filesToDelete = mutableListOf<File>()
@@ -993,6 +992,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     if (file.isDirectory) file.deleteRecursively() else file.delete()
                 } catch (e: Exception) { /* ignore */ }
             }
+            _uiState.emit(AppUiState.CleanFinished)
         }
     }
 
@@ -3625,7 +3625,7 @@ fun DuplicatesTabContent(
                 groups.forEachIndexed { groupIndex, group ->
                     item(key = "header_$groupIndex") {
                         Text(
-                            text = "Group ${groupIndex + 1} (Size: ${formatSize(group.files.firstOrNull()?.file?.length() ?: 0L)})",
+                            text = "Group ${groupIndex + 1} (Size: ${formatSize(group.fileSize)})",
                             color = Color.LightGray,
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp,
