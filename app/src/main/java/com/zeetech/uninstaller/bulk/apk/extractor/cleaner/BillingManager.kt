@@ -35,12 +35,6 @@ object BillingManager : PurchasesUpdatedListener {
     private val _pricesLoaded = MutableStateFlow(false)
     val pricesLoaded = _pricesLoaded.asStateFlow()
 
-    private val _fallbackPrices = MutableStateFlow<Map<String, String>>(mapOf(
-        PRODUCT_MONTHLY to "$6.99",
-        PRODUCT_YEARLY to "$69.99",
-        PRODUCT_LIFETIME to "$269.99"
-    ))
-
     private val _isRestoring = MutableStateFlow(false)
     val isRestoring = _isRestoring.asStateFlow()
 
@@ -75,49 +69,41 @@ object BillingManager : PurchasesUpdatedListener {
 
         connectToPlayBilling()
         
-        // Fetch Fallback Prices & Force Premium Flag
+        // Fetch Force Premium Flag
         val remoteConfig = FirebaseRemoteConfig.getInstance()
         remoteConfig.fetchAndActivate().addOnCompleteListener { task ->
             if (task.isSuccessful) {
                 if (remoteConfig.getBoolean("force_premium_enabled")) {
                     updatePremiumStatus(true)
                 }
-                
-                val mPrice = remoteConfig.getString("paywall_price_monthly").takeIf { it.isNotEmpty() } ?: "$6.99"
-                val yPrice = remoteConfig.getString("paywall_price_yearly").takeIf { it.isNotEmpty() } ?: "$69.99"
-                val lPrice = remoteConfig.getString("paywall_price_lifetime").takeIf { it.isNotEmpty() } ?: "$269.99"
-                
-                val fallbacks = mapOf(
-                    PRODUCT_MONTHLY to mPrice,
-                    PRODUCT_YEARLY to yPrice,
-                    PRODUCT_LIFETIME to lPrice
-                )
-                _fallbackPrices.value = fallbacks
-                
-                if (_productPrices.value.isEmpty()) {
-                    _productPrices.value = fallbacks
-                }
-            } else {
-                if (_productPrices.value.isEmpty()) {
-                    _productPrices.value = _fallbackPrices.value
-                }
             }
         }
     }
 
     private fun connectToPlayBilling() {
+        scope.launch {
+            kotlinx.coroutines.delay(10000)
+            if (!_pricesLoaded.value) {
+                Log.w(TAG, "Billing setup timed out. Force marking prices as loaded.")
+                _pricesLoaded.value = true
+            }
+        }
+
         billingClient.startConnection(object : BillingClientStateListener {
             override fun onBillingSetupFinished(billingResult: BillingResult) {
                 if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
                     Log.d(TAG, "Billing setup finished")
                     queryPurchases()
                     fetchProductDetails()
+                } else {
+                    Log.e(TAG, "Billing setup failed with response code: ${billingResult.responseCode}")
+                    _pricesLoaded.value = true
                 }
             }
 
             override fun onBillingServiceDisconnected() {
                 Log.d(TAG, "Billing service disconnected")
-                // Try to reconnect? Usually handled by activity lifecycle calls
+                _pricesLoaded.value = true
             }
         })
     }
@@ -201,37 +187,51 @@ object BillingManager : PurchasesUpdatedListener {
     }
 
     private fun fetchProductDetails() {
-        val productList = listOf(
+        val subProducts = listOf(
             QueryProductDetailsParams.Product.newBuilder().setProductId(PRODUCT_MONTHLY).setProductType(BillingClient.ProductType.SUBS).build(),
-            QueryProductDetailsParams.Product.newBuilder().setProductId(PRODUCT_YEARLY).setProductType(BillingClient.ProductType.SUBS).build(),
+            QueryProductDetailsParams.Product.newBuilder().setProductId(PRODUCT_YEARLY).setProductType(BillingClient.ProductType.SUBS).build()
+        )
+        val inAppProducts = listOf(
             QueryProductDetailsParams.Product.newBuilder().setProductId(PRODUCT_LIFETIME).setProductType(BillingClient.ProductType.INAPP).build()
         )
 
-        val params = QueryProductDetailsParams.newBuilder().setProductList(productList).build()
+        val newPrices = mutableMapOf<String, String>()
+        var completedQueries = 0
 
-        billingClient.queryProductDetailsAsync(params) { result, productDetailsList ->
-            if (result.responseCode == BillingClient.BillingResponseCode.OK && productDetailsList.isNotEmpty()) {
-                val newPrices = mutableMapOf<String, String>()
+        fun checkCompletion() {
+            completedQueries++
+            if (completedQueries == 2) {
+                _productPrices.value = _productPrices.value + newPrices
+                _pricesLoaded.value = true   // signal UI: real localized prices are ready
+            }
+        }
+
+        // 1. Query SUBS
+        val subsParams = QueryProductDetailsParams.newBuilder().setProductList(subProducts).build()
+        billingClient.queryProductDetailsAsync(subsParams) { result, productDetailsList ->
+            if (result.responseCode == BillingClient.BillingResponseCode.OK && !productDetailsList.isNullOrEmpty()) {
                 productDetailsList.forEach { details ->
-                    val price = if (details.productType == BillingClient.ProductType.SUBS) {
-                        details.subscriptionOfferDetails?.firstOrNull()?.pricingPhases?.pricingPhaseList?.firstOrNull()?.formattedPrice
-                    } else {
-                        details.oneTimePurchaseOfferDetails?.formattedPrice
-                    }
+                    val price = details.subscriptionOfferDetails?.firstOrNull()?.pricingPhases?.pricingPhaseList?.firstOrNull()?.formattedPrice
                     price?.let { newPrices[details.productId] = it }
                 }
-                // Real prices from Play — overwrite everything (including remote config fallbacks)
-                val mergedPrices = _fallbackPrices.value.toMutableMap()
-                mergedPrices.putAll(newPrices)
-                _productPrices.value = mergedPrices
-                _pricesLoaded.value = true   // signal UI: real localized prices are ready
             } else {
-                // Billing query failed — fall back to remote config / hardcoded values
-                if (_productPrices.value.isEmpty()) {
-                    _productPrices.value = _fallbackPrices.value
-                }
-                _pricesLoaded.value = true   // still mark loaded so UI stops showing shimmer
+                Log.e(TAG, "Failed to fetch subscriptions details: ${result.responseCode}, ${result.debugMessage}")
             }
+            checkCompletion()
+        }
+
+        // 2. Query INAPP
+        val inAppParams = QueryProductDetailsParams.newBuilder().setProductList(inAppProducts).build()
+        billingClient.queryProductDetailsAsync(inAppParams) { result, productDetailsList ->
+            if (result.responseCode == BillingClient.BillingResponseCode.OK && !productDetailsList.isNullOrEmpty()) {
+                productDetailsList.forEach { details ->
+                    val price = details.oneTimePurchaseOfferDetails?.formattedPrice
+                    price?.let { newPrices[details.productId] = it }
+                }
+            } else {
+                Log.e(TAG, "Failed to fetch in-app details: ${result.responseCode}, ${result.debugMessage}")
+            }
+            checkCompletion()
         }
     }
 

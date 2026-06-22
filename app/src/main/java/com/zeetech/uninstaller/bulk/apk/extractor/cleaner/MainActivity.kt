@@ -1488,42 +1488,55 @@ fun PaywallScreen(
 
                     Spacer(modifier = Modifier.height(24.dp))
 
-                    // Shows Firebase Remote Config prices immediately;
-                    // recomposed automatically with real localized prices once Play Billing responds.
-                    val monthlyPriceStr = prices[BillingManager.PRODUCT_MONTHLY] ?: "$6.99"
-                    val yearlyPriceStr = prices[BillingManager.PRODUCT_YEARLY] ?: "$69.99"
-                    val lifetimePriceStr = prices[BillingManager.PRODUCT_LIFETIME] ?: "$269.99"
-                    
-                    val mPriceNum = monthlyPriceStr.replace(Regex("[^0-9,.]"), "").replace(",", ".").toFloatOrNull() ?: 6.99f
-                    val yPriceNum = yearlyPriceStr.replace(Regex("[^0-9,.]"), "").replace(",", ".").toFloatOrNull() ?: 69.99f
-                    val savingsPercent = if (mPriceNum > 0f) Math.round((1f - (yPriceNum / 12f) / mPriceNum) * 100f).coerceAtLeast(0) else 44
+                    // Shows animated shimmer loading state until real localized prices are loaded from Play Billing.
+                    val monthlyPriceStr = prices[BillingManager.PRODUCT_MONTHLY]
+                    val yearlyPriceStr = prices[BillingManager.PRODUCT_YEARLY]
+                    val lifetimePriceStr = prices[BillingManager.PRODUCT_LIFETIME]
+
+                    val isLoading = !pricesLoaded
+
+                    val mPriceNum = monthlyPriceStr?.replace(Regex("[^0-9,.]"), "")?.replace(",", ".")?.toFloatOrNull()
+                    val yPriceNum = yearlyPriceStr?.replace(Regex("[^0-9,.]"), "")?.replace(",", ".")?.toFloatOrNull()
+                    val savingsPercent = if (mPriceNum != null && yPriceNum != null && mPriceNum > 0f) {
+                        Math.round((1f - (yPriceNum / 12f) / mPriceNum) * 100f).coerceAtLeast(0)
+                    } else 44
                     val yearlyBadgeText = "SAVE $savingsPercent%"
+
+                    val isSubscribeEnabled = !isLoading && when (selectedPlanId) {
+                        BillingManager.PRODUCT_MONTHLY -> monthlyPriceStr != null
+                        BillingManager.PRODUCT_YEARLY -> yearlyPriceStr != null
+                        BillingManager.PRODUCT_LIFETIME -> lifetimePriceStr != null
+                        else -> false
+                    }
 
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         PaywallPlanCard(
                             id = BillingManager.PRODUCT_MONTHLY,
                             name = stringResource(R.string.paywall_plan_monthly),
-                            price = monthlyPriceStr,
+                            price = monthlyPriceStr ?: "—",
                             period = stringResource(R.string.paywall_per_month),
                             selected = selectedPlanId == BillingManager.PRODUCT_MONTHLY,
+                            isLoading = isLoading,
                             onClick = { selectedPlanId = BillingManager.PRODUCT_MONTHLY }
                         )
                         PaywallPlanCard(
                             id = BillingManager.PRODUCT_YEARLY,
                             name = stringResource(R.string.paywall_plan_yearly),
-                            price = yearlyPriceStr,
+                            price = yearlyPriceStr ?: "—",
                             period = stringResource(R.string.paywall_per_year),
                             badge = yearlyBadgeText,
                             selected = selectedPlanId == BillingManager.PRODUCT_YEARLY,
+                            isLoading = isLoading,
                             onClick = { selectedPlanId = BillingManager.PRODUCT_YEARLY }
                         )
                         PaywallPlanCard(
                             id = BillingManager.PRODUCT_LIFETIME,
                             name = stringResource(R.string.paywall_plan_lifetime),
-                            price = lifetimePriceStr,
+                            price = lifetimePriceStr ?: "—",
                             period = stringResource(R.string.paywall_one_time),
                             badge = stringResource(R.string.paywall_badge_lifetime),
                             selected = selectedPlanId == BillingManager.PRODUCT_LIFETIME,
+                            isLoading = isLoading,
                             onClick = { selectedPlanId = BillingManager.PRODUCT_LIFETIME }
                         )
                     }
@@ -1534,8 +1547,12 @@ fun PaywallScreen(
                         onClick = { 
                             activity?.let { BillingManager.launchPurchase(it, selectedPlanId) }
                         },
+                        enabled = isSubscribeEnabled,
                         modifier = Modifier.fillMaxWidth().height(56.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = EmeraldGreen,
+                            disabledContainerColor = EmeraldGreen.copy(alpha = 0.5f)
+                        ),
                         shape = RoundedCornerShape(16.dp)
                     ) {
                         Text(stringResource(R.string.paywall_action_subscribe), fontWeight = FontWeight.Bold, fontSize = 18.sp)
@@ -1603,30 +1620,53 @@ fun PaywallPlanCard(
     period: String,
     badge: String? = null,
     selected: Boolean,
+    isLoading: Boolean = false,
     onClick: () -> Unit
 ) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() },
+            .clickable(enabled = !isLoading) { onClick() },
         shape = RoundedCornerShape(16.dp),
-        color = if (selected) EmeraldGreen.copy(alpha = 0.1f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) EmeraldGreen else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+        color = if (selected && !isLoading) EmeraldGreen.copy(alpha = 0.1f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+        border = BorderStroke(
+            if (selected && !isLoading) 2.dp else 1.dp,
+            if (selected && !isLoading) EmeraldGreen else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
+        )
     ) {
+        val rowModifier = if (isLoading) {
+            val transition = rememberInfiniteTransition(label = "shimmer")
+            val alpha by transition.animateFloat(
+                initialValue = 0.3f,
+                targetValue = 0.7f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 800, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "shimmer_alpha"
+            )
+            Modifier
+                .padding(vertical = 12.dp, horizontal = 16.dp)
+                .graphicsLayer { this.alpha = alpha }
+        } else {
+            Modifier.padding(vertical = 12.dp, horizontal = 16.dp)
+        }
+
         Row(
-            modifier = Modifier.padding(vertical = 12.dp, horizontal = 16.dp),
+            modifier = rowModifier,
             verticalAlignment = Alignment.CenterVertically
         ) {
             RadioButton(
-                selected = selected,
-                onClick = onClick,
+                selected = selected && !isLoading,
+                onClick = if (isLoading) null else onClick,
+                enabled = !isLoading,
                 colors = RadioButtonDefaults.colors(selectedColor = EmeraldGreen, unselectedColor = Color.Gray)
             )
             Spacer(modifier = Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(text = name, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                    if (badge != null) {
+                    if (badge != null && !isLoading) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Surface(
                             color = if (id == BillingManager.PRODUCT_LIFETIME) PremiumGold else EmeraldGreen,
@@ -1644,22 +1684,32 @@ fun PaywallPlanCard(
                 }
             }
             Row(verticalAlignment = Alignment.Bottom) {
-                AnimatedContent(
-                    targetState = price,
-                    transitionSpec = {
-                        fadeIn(animationSpec = tween(300)) togetherWith
-                        fadeOut(animationSpec = tween(150))
-                    },
-                    label = "price_anim"
-                ) { displayPrice ->
-                    Text(
-                        text = displayPrice,
-                        fontWeight = FontWeight.Black,
-                        fontSize = 18.sp,
-                        color = MaterialTheme.colorScheme.onSurface
+                if (isLoading) {
+                    Box(
+                        modifier = Modifier
+                            .width(70.dp)
+                            .height(20.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f))
                     )
+                } else {
+                    AnimatedContent(
+                        targetState = price,
+                        transitionSpec = {
+                            fadeIn(animationSpec = tween(300)) togetherWith
+                            fadeOut(animationSpec = tween(150))
+                        },
+                        label = "price_anim"
+                    ) { displayPrice ->
+                        Text(
+                            text = displayPrice,
+                            fontWeight = FontWeight.Black,
+                            fontSize = 18.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    Text(text = period, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 2.dp))
                 }
-                Text(text = period, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 2.dp))
             }
         }
     }
