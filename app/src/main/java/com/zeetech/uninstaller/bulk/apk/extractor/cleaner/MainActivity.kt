@@ -558,8 +558,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     val appVersionName: String = try {
         val pInfo = application.packageManager.getPackageInfo(application.packageName, 0)
-        pInfo.versionName ?: "2.0.0"
-    } catch (e: Exception) { "2.0.0" }
+        pInfo.versionName ?: "2.0.1"
+    } catch (e: Exception) { "2.0.1" }
 
     val appVersionCode: Int = try {
         val pInfo = application.packageManager.getPackageInfo(application.packageName, 0)
@@ -568,7 +568,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             pInfo.versionCode
         }
-    } catch (e: Exception) { 20 }
+    } catch (e: Exception) { 21 }
 
     private var discoveredJunk = listOf<File>()
     private var scanJob: Job? = null
