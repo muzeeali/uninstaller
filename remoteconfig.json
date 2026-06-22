@@ -2,7 +2,7 @@
   "parameters": {
     "latest_version_code": {
       "defaultValue": {
-        "value": "10"
+        "value": "22"
       },
       "valueType": "NUMBER"
     },

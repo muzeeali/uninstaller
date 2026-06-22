@@ -558,8 +558,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     val appVersionName: String = try {
         val pInfo = application.packageManager.getPackageInfo(application.packageName, 0)
-        pInfo.versionName ?: "2.0.1"
-    } catch (e: Exception) { "2.0.1" }
+        pInfo.versionName ?: "2.0.2"
+    } catch (e: Exception) { "2.0.2" }
 
     val appVersionCode: Int = try {
         val pInfo = application.packageManager.getPackageInfo(application.packageName, 0)
@@ -568,7 +568,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             pInfo.versionCode
         }
-    } catch (e: Exception) { 21 }
+    } catch (e: Exception) { 22 }
 
     private var discoveredJunk = listOf<File>()
     private var scanJob: Job? = null
@@ -1646,10 +1646,10 @@ fun PaywallPlanCard(
                 label = "shimmer_alpha"
             )
             Modifier
-                .padding(vertical = 12.dp, horizontal = 16.dp)
+                .padding(start = 8.dp, top = 12.dp, end = 12.dp, bottom = 12.dp)
                 .graphicsLayer { this.alpha = alpha }
         } else {
-            Modifier.padding(vertical = 12.dp, horizontal = 16.dp)
+            Modifier.padding(start = 8.dp, top = 12.dp, end = 12.dp, bottom = 12.dp)
         }
 
         Row(
@@ -1662,7 +1662,7 @@ fun PaywallPlanCard(
                 enabled = !isLoading,
                 colors = RadioButtonDefaults.colors(selectedColor = EmeraldGreen, unselectedColor = Color.Gray)
             )
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(4.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(text = name, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
@@ -1677,7 +1677,9 @@ fun PaywallPlanCard(
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Black,
                                 color = if (id == BillingManager.PRODUCT_LIFETIME) Color.Black else Color.White,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
