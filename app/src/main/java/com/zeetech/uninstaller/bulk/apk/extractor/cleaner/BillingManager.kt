@@ -22,7 +22,11 @@ object BillingManager : PurchasesUpdatedListener {
     private const val KEY_IS_PREMIUM = "is_premium"
 
     private lateinit var billingClient: BillingClient
-    val isBillingReady: Boolean get() = ::billingClient.isInitialized && billingClient.isReady
+
+    // Exposed as a StateFlow so the paywall UI can react the moment billing connects.
+    private val _isBillingReady = MutableStateFlow(false)
+    val isBillingReadyFlow = _isBillingReady.asStateFlow()
+    val isBillingReady: Boolean get() = _isBillingReady.value
     private lateinit var firebaseAnalytics: FirebaseAnalytics
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -99,16 +103,19 @@ object BillingManager : PurchasesUpdatedListener {
             override fun onBillingSetupFinished(billingResult: BillingResult) {
                 if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
                     Log.d(TAG, "Billing setup finished")
+                    _isBillingReady.value = true
                     queryPurchases()
                     fetchProductDetails()
                 } else {
                     Log.e(TAG, "Billing setup failed with response code: ${billingResult.responseCode}")
+                    _isBillingReady.value = false
                     _pricesLoaded.value = true
                 }
             }
 
             override fun onBillingServiceDisconnected() {
                 Log.d(TAG, "Billing service disconnected — scheduling reconnect")
+                _isBillingReady.value = false
                 scope.launch {
                     kotlinx.coroutines.delay(3000)
                     connectToPlayBilling()
@@ -196,6 +203,10 @@ object BillingManager : PurchasesUpdatedListener {
     }
 
     fun fetchProductDetails() {
+        // Reset loading flag so the paywall UI re-enters its shimmer state
+        // and re-renders once fresh prices arrive from Play Console.
+        _pricesLoaded.value = false
+
         val subProducts = listOf(
             QueryProductDetailsParams.Product.newBuilder().setProductId(PRODUCT_MONTHLY).setProductType(BillingClient.ProductType.SUBS).build(),
             QueryProductDetailsParams.Product.newBuilder().setProductId(PRODUCT_YEARLY).setProductType(BillingClient.ProductType.SUBS).build()
@@ -210,7 +221,9 @@ object BillingManager : PurchasesUpdatedListener {
         fun checkCompletion() {
             completedQueries++
             if (completedQueries == 2) {
-                _productPrices.value = _productPrices.value + newPrices
+                // Replace prices entirely so stale values from the old price
+                // are not retained when a product is temporarily unavailable.
+                _productPrices.value = newPrices
                 _pricesLoaded.value = true   // signal UI: real localized prices are ready
             }
         }
