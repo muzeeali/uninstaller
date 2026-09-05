@@ -3,6 +3,7 @@ package com.zeetech.uninstaller.bulk.apk.extractor.cleaner
 import android.app.Activity
 import android.content.Context
 import android.util.Log
+import android.widget.Toast
 import com.android.billingclient.api.*
 import com.google.firebase.analytics.FirebaseAnalytics
 import com.google.firebase.analytics.ktx.analytics
@@ -10,11 +11,12 @@ import com.google.firebase.ktx.Firebase
 import com.google.firebase.remoteconfig.FirebaseRemoteConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.time.LocalDate
+import kotlinx.coroutines.withContext
 
 object BillingManager : PurchasesUpdatedListener {
     private const val TAG = "BillingManager"
@@ -27,8 +29,13 @@ object BillingManager : PurchasesUpdatedListener {
     private val _isBillingReady = MutableStateFlow(false)
     val isBillingReadyFlow = _isBillingReady.asStateFlow()
     val isBillingReady: Boolean get() = _isBillingReady.value
+
     private lateinit var firebaseAnalytics: FirebaseAnalytics
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    // Tracked so we can cancel the previous timeout when reconnecting,
+    // preventing both coroutine leaks and false "prices loaded" signals.
+    private var priceLoadTimeoutJob: Job? = null
 
     private val _isPremium = MutableStateFlow(false)
     val isPremium = _isPremium.asStateFlow()
@@ -62,7 +69,7 @@ object BillingManager : PurchasesUpdatedListener {
 
     fun initialize(context: Context) {
         firebaseAnalytics = Firebase.analytics
-        
+
         // Load from cache first for immediate UI update
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         _isPremium.value = prefs.getBoolean(KEY_IS_PREMIUM, false) || DEBUG_FORCE_PREMIUM
@@ -78,7 +85,7 @@ object BillingManager : PurchasesUpdatedListener {
             .build()
 
         connectToPlayBilling()
-        
+
         // Fetch Force Premium Flag
         val remoteConfig = FirebaseRemoteConfig.getInstance()
         remoteConfig.fetchAndActivate().addOnCompleteListener { task ->
@@ -91,7 +98,10 @@ object BillingManager : PurchasesUpdatedListener {
     }
 
     private fun connectToPlayBilling() {
-        scope.launch {
+        // Cancel any previously running timeout to prevent coroutine leaks
+        // and to avoid a stale timeout falsely marking prices as loaded.
+        priceLoadTimeoutJob?.cancel()
+        priceLoadTimeoutJob = scope.launch {
             kotlinx.coroutines.delay(10000)
             if (!_pricesLoaded.value) {
                 Log.w(TAG, "Billing setup timed out. Force marking prices as loaded.")
@@ -103,6 +113,7 @@ object BillingManager : PurchasesUpdatedListener {
             override fun onBillingSetupFinished(billingResult: BillingResult) {
                 if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
                     Log.d(TAG, "Billing setup finished")
+                    priceLoadTimeoutJob?.cancel() // Billing connected — timeout no longer needed
                     _isBillingReady.value = true
                     queryPurchases()
                     fetchProductDetails()
@@ -125,10 +136,12 @@ object BillingManager : PurchasesUpdatedListener {
     }
 
     fun queryPurchases() {
-        if (!billingClient.isReady) return
+        // Use isBillingReady (StateFlow-backed) for consistency
+        if (!isBillingReady) return
 
         // Collect both SUBS + INAPP results before calling updatePremiumStatus
         // to avoid race-condition where one query transiently revokes premium.
+        // All state mutation happens on Main to eliminate threading races.
         var subsResult: List<Purchase>? = null
         var inappsResult: List<Purchase>? = null
 
@@ -141,15 +154,19 @@ object BillingManager : PurchasesUpdatedListener {
         billingClient.queryPurchasesAsync(
             QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.SUBS).build()
         ) { result, purchases ->
-            subsResult = if (result.responseCode == BillingClient.BillingResponseCode.OK) purchases else emptyList()
-            tryProcess()
+            scope.launch {
+                subsResult = if (result.responseCode == BillingClient.BillingResponseCode.OK) purchases else emptyList()
+                tryProcess()
+            }
         }
 
         billingClient.queryPurchasesAsync(
             QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.INAPP).build()
         ) { result, purchases ->
-            inappsResult = if (result.responseCode == BillingClient.BillingResponseCode.OK) purchases else emptyList()
-            tryProcess()
+            scope.launch {
+                inappsResult = if (result.responseCode == BillingClient.BillingResponseCode.OK) purchases else emptyList()
+                tryProcess()
+            }
         }
     }
 
@@ -163,7 +180,7 @@ object BillingManager : PurchasesUpdatedListener {
                 }
             }
         }
-        
+
         // Update state and cache
         updatePremiumStatus(premiumActive)
     }
@@ -203,6 +220,9 @@ object BillingManager : PurchasesUpdatedListener {
     }
 
     fun fetchProductDetails() {
+        // Guard: do nothing if billing isn't connected — avoids stuck shimmer
+        if (!isBillingReady) return
+
         // Reset loading flag so the paywall UI re-enters its shimmer state
         // and re-renders once fresh prices arrive from Play Console.
         _pricesLoaded.value = false
@@ -215,6 +235,8 @@ object BillingManager : PurchasesUpdatedListener {
             QueryProductDetailsParams.Product.newBuilder().setProductId(PRODUCT_LIFETIME).setProductType(BillingClient.ProductType.INAPP).build()
         )
 
+        // All mutations happen inside scope.launch (Main dispatcher) to eliminate
+        // the threading race between the two concurrent async callbacks.
         val newPrices = mutableMapOf<String, String>()
         var completedQueries = 0
 
@@ -223,7 +245,7 @@ object BillingManager : PurchasesUpdatedListener {
             if (completedQueries == 2) {
                 // Replace prices entirely so stale values from the old price
                 // are not retained when a product is temporarily unavailable.
-                _productPrices.value = newPrices
+                _productPrices.value = newPrices.toMap()
                 _pricesLoaded.value = true   // signal UI: real localized prices are ready
             }
         }
@@ -231,44 +253,48 @@ object BillingManager : PurchasesUpdatedListener {
         // 1. Query SUBS
         val subsParams = QueryProductDetailsParams.newBuilder().setProductList(subProducts).build()
         billingClient.queryProductDetailsAsync(subsParams) { result, queryResult ->
-            if (result.responseCode == BillingClient.BillingResponseCode.OK) {
-                queryResult.productDetailsList.forEach { details: ProductDetails ->
-                    // Prefer the base-plan offer (skip free-trial phases that have priceAmountMicros == 0)
-                    val basePlanOffer = details.subscriptionOfferDetails
-                        ?.firstOrNull { offer ->
-                            offer.pricingPhases.pricingPhaseList.none { phase -> phase.priceAmountMicros == 0L }
-                        }
-                        ?: details.subscriptionOfferDetails?.firstOrNull()
-                    val price = basePlanOffer
-                        ?.pricingPhases?.pricingPhaseList
-                        ?.firstOrNull { phase -> phase.priceAmountMicros > 0L }
-                        ?.formattedPrice
-                    price?.let { p -> newPrices[details.productId] = p }
+            scope.launch {
+                if (result.responseCode == BillingClient.BillingResponseCode.OK) {
+                    queryResult.productDetailsList.forEach { details: ProductDetails ->
+                        // Prefer the base-plan offer (skip free-trial phases that have priceAmountMicros == 0)
+                        val basePlanOffer = details.subscriptionOfferDetails
+                            ?.firstOrNull { offer ->
+                                offer.pricingPhases.pricingPhaseList.none { phase -> phase.priceAmountMicros == 0L }
+                            }
+                            ?: details.subscriptionOfferDetails?.firstOrNull()
+                        val price = basePlanOffer
+                            ?.pricingPhases?.pricingPhaseList
+                            ?.firstOrNull { phase -> phase.priceAmountMicros > 0L }
+                            ?.formattedPrice
+                        price?.let { p -> newPrices[details.productId] = p }
+                    }
+                } else {
+                    Log.e(TAG, "Failed to fetch subscriptions details: ${result.responseCode}, ${result.debugMessage}")
                 }
-            } else {
-                Log.e(TAG, "Failed to fetch subscriptions details: ${result.responseCode}, ${result.debugMessage}")
+                checkCompletion()
             }
-            checkCompletion()
         }
 
         // 2. Query INAPP
         val inAppParams = QueryProductDetailsParams.newBuilder().setProductList(inAppProducts).build()
         billingClient.queryProductDetailsAsync(inAppParams) { result, queryResult ->
-            if (result.responseCode == BillingClient.BillingResponseCode.OK) {
-                queryResult.productDetailsList.forEach { details: ProductDetails ->
-                    val price = details.oneTimePurchaseOfferDetails?.formattedPrice
-                    price?.let { p -> newPrices[details.productId] = p }
+            scope.launch {
+                if (result.responseCode == BillingClient.BillingResponseCode.OK) {
+                    queryResult.productDetailsList.forEach { details: ProductDetails ->
+                        val price = details.oneTimePurchaseOfferDetails?.formattedPrice
+                        price?.let { p -> newPrices[details.productId] = p }
+                    }
+                } else {
+                    Log.e(TAG, "Failed to fetch in-app details: ${result.responseCode}, ${result.debugMessage}")
                 }
-            } else {
-                Log.e(TAG, "Failed to fetch in-app details: ${result.responseCode}, ${result.debugMessage}")
+                checkCompletion()
             }
-            checkCompletion()
         }
     }
 
     fun launchPurchase(activity: Activity, productId: String) {
         val productType = if (productId == PRODUCT_LIFETIME) BillingClient.ProductType.INAPP else BillingClient.ProductType.SUBS
-        
+
         val productList = listOf(
             QueryProductDetailsParams.Product.newBuilder()
                 .setProductId(productId)
@@ -282,7 +308,7 @@ object BillingManager : PurchasesUpdatedListener {
             if (result.responseCode == BillingClient.BillingResponseCode.OK && queryResult.productDetailsList.isNotEmpty()) {
                 val productDetails = queryResult.productDetailsList[0]
                 val offerToken = productDetails.subscriptionOfferDetails?.get(0)?.offerToken ?: ""
-                
+
                 val flowParams = BillingFlowParams.newBuilder()
                     .setProductDetailsParamsList(listOf(
                         BillingFlowParams.ProductDetailsParams.newBuilder()
@@ -291,15 +317,26 @@ object BillingManager : PurchasesUpdatedListener {
                             .build()
                     ))
                     .build()
-                
+
                 billingClient.launchBillingFlow(activity, flowParams)
+            } else {
+                // Show user feedback instead of silently doing nothing
+                Log.e(TAG, "launchPurchase failed: responseCode=${result.responseCode}, productList empty=${queryResult.productDetailsList.isEmpty()}")
+                scope.launch {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(activity, "Unable to start purchase. Please try again.", Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
         }
     }
 
     fun restorePurchases() {
-        if (!billingClient.isReady || _isRestoring.value) return
+        if (!isBillingReady || _isRestoring.value) return
         _isRestoring.value = true
+
+        // All state is mutated inside scope.launch (Main) to eliminate
+        // the threading race between the two concurrent async callbacks.
         var completedQueries = 0
         var foundPremium = false
 
@@ -318,24 +355,27 @@ object BillingManager : PurchasesUpdatedListener {
         billingClient.queryPurchasesAsync(
             QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.SUBS).build()
         ) { result, purchases ->
-            // Only count as "found" if there is at least one truly PURCHASED item
-            if (result.responseCode == BillingClient.BillingResponseCode.OK &&
-                purchases.any { it.purchaseState == Purchase.PurchaseState.PURCHASED }) {
-                processPurchases(purchases)
-                foundPremium = true
+            scope.launch {
+                if (result.responseCode == BillingClient.BillingResponseCode.OK &&
+                    purchases.any { it.purchaseState == Purchase.PurchaseState.PURCHASED }) {
+                    processPurchases(purchases)
+                    foundPremium = true
+                }
+                onQueryComplete()
             }
-            onQueryComplete()
         }
 
         billingClient.queryPurchasesAsync(
             QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.INAPP).build()
         ) { result, purchases ->
-            if (result.responseCode == BillingClient.BillingResponseCode.OK &&
-                purchases.any { it.purchaseState == Purchase.PurchaseState.PURCHASED }) {
-                processPurchases(purchases)
-                foundPremium = true
+            scope.launch {
+                if (result.responseCode == BillingClient.BillingResponseCode.OK &&
+                    purchases.any { it.purchaseState == Purchase.PurchaseState.PURCHASED }) {
+                    processPurchases(purchases)
+                    foundPremium = true
+                }
+                onQueryComplete()
             }
-            onQueryComplete()
         }
     }
 
