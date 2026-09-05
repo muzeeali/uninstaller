@@ -22,6 +22,7 @@ object BillingManager : PurchasesUpdatedListener {
     private const val KEY_IS_PREMIUM = "is_premium"
 
     private lateinit var billingClient: BillingClient
+    val isBillingReady: Boolean get() = ::billingClient.isInitialized && billingClient.isReady
     private lateinit var firebaseAnalytics: FirebaseAnalytics
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -64,7 +65,12 @@ object BillingManager : PurchasesUpdatedListener {
 
         billingClient = BillingClient.newBuilder(context)
             .setListener(this)
-            .enablePendingPurchases(PendingPurchasesParams.newBuilder().enableOneTimeProducts().build())
+            .enablePendingPurchases(
+                PendingPurchasesParams.newBuilder()
+                    .enableOneTimeProducts()
+                    .enablePrepaidPlans()
+                    .build()
+            )
             .build()
 
         connectToPlayBilling()
@@ -102,8 +108,11 @@ object BillingManager : PurchasesUpdatedListener {
             }
 
             override fun onBillingServiceDisconnected() {
-                Log.d(TAG, "Billing service disconnected")
-                _pricesLoaded.value = true
+                Log.d(TAG, "Billing service disconnected — scheduling reconnect")
+                scope.launch {
+                    kotlinx.coroutines.delay(3000)
+                    connectToPlayBilling()
+                }
             }
         })
     }
@@ -186,7 +195,7 @@ object BillingManager : PurchasesUpdatedListener {
         firebaseAnalytics.setUserProperty("premium_status", if (finalStatus) "premium" else "basic")
     }
 
-    private fun fetchProductDetails() {
+    fun fetchProductDetails() {
         val subProducts = listOf(
             QueryProductDetailsParams.Product.newBuilder().setProductId(PRODUCT_MONTHLY).setProductType(BillingClient.ProductType.SUBS).build(),
             QueryProductDetailsParams.Product.newBuilder().setProductId(PRODUCT_YEARLY).setProductType(BillingClient.ProductType.SUBS).build()
@@ -208,11 +217,20 @@ object BillingManager : PurchasesUpdatedListener {
 
         // 1. Query SUBS
         val subsParams = QueryProductDetailsParams.newBuilder().setProductList(subProducts).build()
-        billingClient.queryProductDetailsAsync(subsParams) { result, productDetailsList ->
-            if (result.responseCode == BillingClient.BillingResponseCode.OK && !productDetailsList.isNullOrEmpty()) {
-                productDetailsList.forEach { details ->
-                    val price = details.subscriptionOfferDetails?.firstOrNull()?.pricingPhases?.pricingPhaseList?.firstOrNull()?.formattedPrice
-                    price?.let { newPrices[details.productId] = it }
+        billingClient.queryProductDetailsAsync(subsParams) { result, queryResult ->
+            if (result.responseCode == BillingClient.BillingResponseCode.OK) {
+                queryResult.productDetailsList.forEach { details: ProductDetails ->
+                    // Prefer the base-plan offer (skip free-trial phases that have priceAmountMicros == 0)
+                    val basePlanOffer = details.subscriptionOfferDetails
+                        ?.firstOrNull { offer ->
+                            offer.pricingPhases.pricingPhaseList.none { phase -> phase.priceAmountMicros == 0L }
+                        }
+                        ?: details.subscriptionOfferDetails?.firstOrNull()
+                    val price = basePlanOffer
+                        ?.pricingPhases?.pricingPhaseList
+                        ?.firstOrNull { phase -> phase.priceAmountMicros > 0L }
+                        ?.formattedPrice
+                    price?.let { p -> newPrices[details.productId] = p }
                 }
             } else {
                 Log.e(TAG, "Failed to fetch subscriptions details: ${result.responseCode}, ${result.debugMessage}")
@@ -222,11 +240,11 @@ object BillingManager : PurchasesUpdatedListener {
 
         // 2. Query INAPP
         val inAppParams = QueryProductDetailsParams.newBuilder().setProductList(inAppProducts).build()
-        billingClient.queryProductDetailsAsync(inAppParams) { result, productDetailsList ->
-            if (result.responseCode == BillingClient.BillingResponseCode.OK && !productDetailsList.isNullOrEmpty()) {
-                productDetailsList.forEach { details ->
+        billingClient.queryProductDetailsAsync(inAppParams) { result, queryResult ->
+            if (result.responseCode == BillingClient.BillingResponseCode.OK) {
+                queryResult.productDetailsList.forEach { details: ProductDetails ->
                     val price = details.oneTimePurchaseOfferDetails?.formattedPrice
-                    price?.let { newPrices[details.productId] = it }
+                    price?.let { p -> newPrices[details.productId] = p }
                 }
             } else {
                 Log.e(TAG, "Failed to fetch in-app details: ${result.responseCode}, ${result.debugMessage}")
@@ -247,9 +265,9 @@ object BillingManager : PurchasesUpdatedListener {
 
         val params = QueryProductDetailsParams.newBuilder().setProductList(productList).build()
 
-        billingClient.queryProductDetailsAsync(params) { result, productDetailsList ->
-            if (result.responseCode == BillingClient.BillingResponseCode.OK && productDetailsList.isNotEmpty()) {
-                val productDetails = productDetailsList[0]
+        billingClient.queryProductDetailsAsync(params) { result, queryResult ->
+            if (result.responseCode == BillingClient.BillingResponseCode.OK && queryResult.productDetailsList.isNotEmpty()) {
+                val productDetails = queryResult.productDetailsList[0]
                 val offerToken = productDetails.subscriptionOfferDetails?.get(0)?.offerToken ?: ""
                 
                 val flowParams = BillingFlowParams.newBuilder()

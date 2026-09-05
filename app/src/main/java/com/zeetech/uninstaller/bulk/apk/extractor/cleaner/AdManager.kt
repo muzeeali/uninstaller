@@ -120,10 +120,10 @@ object AdManager {
 
         // Mark that we want to show an App Open on this cold start when it's available
         pendingShowAppOpenOnLoad = true
-        MobileAds.initialize(activity.applicationContext) {
-            Logger.d(TAG, "MobileAds initialized")
-            // Request consent first (if UMP available), then load ads
-            requestConsent(activity) {
+        // ✅ Collect consent FIRST (GDPR / AdMob policy), then initialize MobileAds
+        requestConsent(activity) {
+            MobileAds.initialize(activity.applicationContext) {
+                Logger.d(TAG, "MobileAds initialized")
                 loadInterstitial()
                 loadRewarded()
                 loadAppOpen()

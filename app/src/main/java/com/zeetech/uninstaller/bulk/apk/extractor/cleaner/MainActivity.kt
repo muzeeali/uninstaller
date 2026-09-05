@@ -1372,6 +1372,14 @@ fun PaywallScreen(
         if (isPremium) onPurchaseSuccess()
     }
 
+    // Refresh prices from Play Billing every time the paywall opens so
+    // any price changes made in Play Console are reflected immediately.
+    LaunchedEffect(Unit) {
+        if (BillingManager.isBillingReady) {
+            BillingManager.fetchProductDetails()
+        }
+    }
+
     // Show snackbar feedback for restore result
     LaunchedEffect(restoreResult) {
         restoreResult?.let { msg ->

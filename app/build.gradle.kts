@@ -7,13 +7,13 @@ plugins {
 
 android {
     namespace = "com.zeetech.uninstaller.bulk.apk.extractor.cleaner"
-    compileSdk = 35
+    compileSdk = 36
     defaultConfig {
         applicationId = "com.zeetech.uninstaller.bulk.apk.extractor.cleaner"
         minSdk = 24
-        targetSdk = 35
-        versionCode = 22
-        versionName = "2.0.2"
+        targetSdk = 36
+        versionCode = 24
+        versionName = "2.0.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -75,7 +75,7 @@ dependencies {
     // User Messaging Platform for consent (UMP)
     implementation("com.google.android.ump:user-messaging-platform:4.0.0")
     // Google Play Billing (for in-app subscriptions)
-    implementation("com.android.billingclient:billing-ktx:7.1.1")
+    implementation("com.android.billingclient:billing-ktx:8.0.0")
     // App Updates & Reviews
     implementation(libs.play.app.update)
     implementation(libs.play.review)
