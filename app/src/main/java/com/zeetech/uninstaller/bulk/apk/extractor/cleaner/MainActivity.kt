@@ -558,8 +558,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     val appVersionName: String = try {
         val pInfo = application.packageManager.getPackageInfo(application.packageName, 0)
-        pInfo.versionName ?: "2.0.2"
-    } catch (e: Exception) { "2.0.2" }
+        pInfo.versionName ?: "2.1.0"
+    } catch (e: Exception) { "2.1.0" }
 
     val appVersionCode: Int = try {
         val pInfo = application.packageManager.getPackageInfo(application.packageName, 0)
@@ -2036,7 +2036,7 @@ fun UninstallerApp(
                         if (isMandatoryUpdate) 
                             "This version has critical improvements. You must update to the latest version to continue using the app."
                         else 
-                            "A new version of Uninstaller is ready. Update now to get the latest features and security improvements.",
+                            "A new version of Fix Pro is ready. Update now to get the latest features and security improvements.",
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -2263,19 +2263,19 @@ fun UninstallerTopBar(
             when (title) {
                 "UNINSTALLER" -> {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("ZEE ", fontSize = 17.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.2.sp)
-                        Text("UNINSTALLER", fontSize = 17.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.2.sp)
+                        Text("FIX ", fontSize = 17.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.2.sp)
+                        Text("PRO", fontSize = 17.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.2.sp)
                     }
                 }
                 "SETTINGS" -> {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("ZEE ", fontSize = 17.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.2.sp)
+                        Text("FIX ", fontSize = 17.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.2.sp)
                         Text("SETTINGS", fontSize = 17.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.2.sp)
                     }
                 }
                 "HISTORY" -> {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("ZEE ", fontSize = 17.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.2.sp)
+                        Text("FIX ", fontSize = 17.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.2.sp)
                         Text("HISTORY", fontSize = 17.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.2.sp)
                     }
                 }
@@ -4618,8 +4618,8 @@ fun SettingsScreen(
                         }
                     }
                     Row {
-                        Text("ZEE ", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = LogoPurple)
-                        Text("UNINSTALLER", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = EmeraldGreen)
+                        Text("FIX ", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = LogoPurple)
+                        Text("PRO", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = EmeraldGreen)
                     }
                     
                     Spacer(modifier = Modifier.height(4.dp))
@@ -4928,7 +4928,7 @@ fun SettingsScreen(
                     onClick = {
                         val intent = Intent(Intent.ACTION_SENDTO).apply {
                             data = Uri.parse("mailto:muzeeali8@gmail.com")
-                            putExtra(Intent.EXTRA_SUBJECT, "Zee Uninstaller App Feedback")
+                            putExtra(Intent.EXTRA_SUBJECT, "Fix Pro App Feedback")
                         }
                         try {
                             context.startActivity(intent)

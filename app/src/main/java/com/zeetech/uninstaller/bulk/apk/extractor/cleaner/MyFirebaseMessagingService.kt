@@ -26,7 +26,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         // Check if message contains a notification payload.
         remoteMessage.notification?.let {
             Logger.d(TAG, "Message Notification Body: ${it.body}")
-            sendNotification(it.title ?: "Uninstaller", it.body ?: "")
+            sendNotification(it.title ?: getString(R.string.app_name), it.body ?: "")
         }
     }
 
