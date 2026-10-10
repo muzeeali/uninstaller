@@ -1853,6 +1853,7 @@ fun UninstallerApp(
                         if (currentScreen == "settings") navigateHome()
                         else currentScreen = "settings"
                     },
+                    onHomeClick = { navigateHome() },
                     showSettings = currentScreen == "home",
                     isPremium = isPremium,
                     // Home: Refresh + History | Settings: Share + History | History: Refresh + Settings
@@ -1964,7 +1965,7 @@ fun UninstallerApp(
                                 AdManager.onSwipeToRefresh()
                             },
                             onBulkUninstall = { apps, doUninstall ->
-                                if (AdManager.isRewardedReady()) {
+                                if (!isPremium && AdManager.isRewardedReady()) {
                                     AdManager.showRewarded(
                                         onRewardEarned = {
                                             doUninstall()
@@ -2195,7 +2196,8 @@ fun UninstallerTopBar(
     onShareApp: (() -> Unit)? = null,
     onSettingsNav: (() -> Unit)? = null,
     onHistory: (() -> Unit)? = null,
-    isPremium: Boolean = false
+    isPremium: Boolean = false,
+    onHomeClick: (() -> Unit)? = null
 ) {
     @OptIn(ExperimentalMaterial3Api::class)
     CenterAlignedTopAppBar(
@@ -2206,54 +2208,77 @@ fun UninstallerTopBar(
                     horizontalArrangement = Arrangement.spacedBy((-2).dp),
                     modifier = Modifier.padding(start = 4.dp)
                 ) {
-                    if (onRefresh != null) {
-                        IconButton(onClick = onRefresh) {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = stringResource(R.string.content_refresh),
-                                tint = EmeraldGreen,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-                    }
-                    if (onHistory != null) {
-                        IconButton(onClick = onHistory) {
-                            Box(contentAlignment = Alignment.Center) {
+                    if (title == "HISTORY") {
+                        if (onHomeClick != null) {
+                            IconButton(onClick = onHomeClick) {
                                 Icon(
-                                    painter = painterResource(id = R.drawable.ic_history),
-                                    contentDescription = "History",
-                                    tint = if (isPremium) EmeraldGreen else Color.Red,
+                                    imageVector = Icons.Default.Home,
+                                    contentDescription = "Home",
+                                    tint = EmeraldGreen,
                                     modifier = Modifier.size(22.dp)
                                 )
-                                if (!isPremium) {
+                            }
+                        }
+                        if (onRefresh != null) {
+                            IconButton(onClick = onRefresh) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = stringResource(R.string.content_refresh),
+                                    tint = EmeraldGreen,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+                    } else {
+                        if (onRefresh != null) {
+                            IconButton(onClick = onRefresh) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = stringResource(R.string.content_refresh),
+                                    tint = EmeraldGreen,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+                        if (onHistory != null) {
+                            IconButton(onClick = onHistory) {
+                                Box(contentAlignment = Alignment.Center) {
                                     Icon(
-                                        imageVector = Icons.Default.Lock,
-                                        contentDescription = "Locked",
-                                        tint = Color.Red,
-                                        modifier = Modifier.size(10.dp).align(Alignment.BottomEnd).offset(x = 2.dp, y = 2.dp)
+                                        painter = painterResource(id = R.drawable.ic_history),
+                                        contentDescription = "History",
+                                        tint = if (isPremium) EmeraldGreen else Color.Red,
+                                        modifier = Modifier.size(22.dp)
                                     )
+                                    if (!isPremium) {
+                                        Icon(
+                                            imageVector = Icons.Default.Lock,
+                                            contentDescription = "Locked",
+                                            tint = Color.Red,
+                                            modifier = Modifier.size(10.dp).align(Alignment.BottomEnd).offset(x = 2.dp, y = 2.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
-                    }
-                    if (onShareApp != null) {
-                        IconButton(onClick = onShareApp) {
-                            Icon(
-                                imageVector = Icons.Default.Share,
-                                contentDescription = stringResource(R.string.item_share),
-                                tint = EmeraldGreen,
-                                modifier = Modifier.size(22.dp)
-                            )
+                        if (onShareApp != null) {
+                            IconButton(onClick = onShareApp) {
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = stringResource(R.string.item_share),
+                                    tint = EmeraldGreen,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
                         }
-                    }
-                    if (onSettingsNav != null) {
-                        IconButton(onClick = onSettingsNav) {
-                            Icon(
-                                imageVector = Icons.Default.Settings,
-                                contentDescription = "Settings",
-                                tint = EmeraldGreen,
-                                modifier = Modifier.size(22.dp)
-                            )
+                        if (onSettingsNav != null) {
+                            IconButton(onClick = onSettingsNav) {
+                                Icon(
+                                    imageVector = Icons.Default.Settings,
+                                    contentDescription = "Settings",
+                                    tint = EmeraldGreen,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -2268,16 +2293,10 @@ fun UninstallerTopBar(
                     }
                 }
                 "SETTINGS" -> {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("FIX ", fontSize = 17.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.2.sp)
-                        Text("SETTINGS", fontSize = 17.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.2.sp)
-                    }
+                    Text("SETTINGS", fontSize = 17.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.2.sp)
                 }
                 "HISTORY" -> {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("FIX ", fontSize = 17.sp, fontWeight = FontWeight.Black, color = LogoPurple, letterSpacing = 0.2.sp)
-                        Text("HISTORY", fontSize = 17.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.2.sp)
-                    }
+                    Text("HISTORY", fontSize = 17.sp, fontWeight = FontWeight.Black, color = EmeraldGreen, letterSpacing = 0.2.sp)
                 }
                 else -> {
                     Text(text = title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LogoPurple, letterSpacing = 1.sp)
@@ -2291,21 +2310,40 @@ fun UninstallerTopBar(
                     horizontalArrangement = Arrangement.spacedBy((-2).dp),
                     modifier = Modifier.padding(end = 4.dp)
                 ) {
-                    IconButton(onClick = onThemeToggle) {
-                        Icon(
-                            painter = painterResource(id = if (isDarkTheme) R.drawable.ic_light_mode else R.drawable.ic_dark_mode),
-                            contentDescription = stringResource(R.string.content_toggle_theme),
-                            tint = if (isDarkTheme) EmeraldGreen else LogoPurple,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                    IconButton(onClick = onSettingsClick) {
-                        Icon(
-                            imageVector = if (!showSettings) Icons.Default.Home else Icons.Default.Settings,
-                            contentDescription = stringResource(R.string.content_navigate),
-                            tint = LogoPurple,
-                            modifier = Modifier.size(22.dp)
-                        )
+                    if (title == "HISTORY") {
+                        IconButton(onClick = onThemeToggle) {
+                            Icon(
+                                painter = painterResource(id = if (isDarkTheme) R.drawable.ic_light_mode else R.drawable.ic_dark_mode),
+                                contentDescription = stringResource(R.string.content_toggle_theme),
+                                tint = if (isDarkTheme) EmeraldGreen else LogoPurple,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        IconButton(onClick = onSettingsClick) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Settings",
+                                tint = LogoPurple,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    } else {
+                        IconButton(onClick = onThemeToggle) {
+                            Icon(
+                                painter = painterResource(id = if (isDarkTheme) R.drawable.ic_light_mode else R.drawable.ic_dark_mode),
+                                contentDescription = stringResource(R.string.content_toggle_theme),
+                                tint = if (isDarkTheme) EmeraldGreen else LogoPurple,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        IconButton(onClick = onSettingsClick) {
+                            Icon(
+                                imageVector = if (!showSettings) Icons.Default.Home else Icons.Default.Settings,
+                                contentDescription = stringResource(R.string.content_navigate),
+                                tint = LogoPurple,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -2693,7 +2731,7 @@ fun HomeScreen(
                 BulkActionBar(
                     count = selectedApps.size,
                     reclaimedSpace = formatSize(selectedApps.sumOf { it.sizeBytes }),
-                    isAdUnlocked = if (selectedApps.size == 1) !isRewardedReady || isBulkAdUnlocked else !isRewardedReady,
+                    isAdUnlocked = if (isPremium) true else (if (selectedApps.size == 1) !isRewardedReady || isBulkAdUnlocked else !isRewardedReady),
                     onUninstall = {
                         val appsToUninstall = selectedApps.toList()
                         if (appsToUninstall.size == 1) {
@@ -2702,11 +2740,13 @@ fun HomeScreen(
                                 selectedApps.clear()
                                 onSelectionChanged(0)
                             }
-                            if (AdManager.isRewardedReady() && !isBulkAdUnlocked) {
+                            if (!isPremium && AdManager.isRewardedReady() && !isBulkAdUnlocked) {
                                 AdManager.showRewarded(onRewardEarned = action, onDismiss = {})
                             } else {
                                 // Category 2: Single uninstall from bar
                                 onUninstallRequest(appsToUninstall.first(), false)
+                                selectedApps.clear()
+                                onSelectionChanged(0)
                             }
                         } else {
                             onBulkUninstall(appsToUninstall) {
@@ -4155,6 +4195,12 @@ fun ShredderScreen(
     onCancel: () -> Unit,
     onShowPaywall: () -> Unit
 ) {
+    LaunchedEffect(Unit) {
+        if (!isPremium && !AdManager.isRewardedReady()) {
+            AdManager.loadRewarded()
+        }
+    }
+
     val dupsFree by FeatureFlags.shredderDuplicatesFree.collectAsState()
     val largeFree by FeatureFlags.shredderLargeFilesFree.collectAsState()
     val largeFileThreshold by viewModel.largeFileThreshold.collectAsState()
@@ -4326,7 +4372,21 @@ fun ShredderScreen(
                 Button(
                     onClick = {
                         if (totalSelectedSize > 0) {
-                            showConfirmDialog = true
+                            if (!isPremium) {
+                                if (AdManager.isRewardedReady()) {
+                                    AdManager.showRewarded(
+                                        onRewardEarned = {
+                                            onClean()
+                                        },
+                                        onDismiss = {}
+                                    )
+                                } else {
+                                    AdManager.loadRewarded()
+                                    onClean()
+                                }
+                            } else {
+                                showConfirmDialog = true
+                            }
                         }
                     },
                     enabled = totalSelectedSize > 0,
@@ -4339,12 +4399,28 @@ fun ShredderScreen(
                     ),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text(
-                        text = "SHRED ${formatSize(totalSelectedSize)}",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp,
-                        color = Color.White
-                    )
+                    if (!isPremium) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                            tint = Color.White
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Watch Ad to SHRED ${formatSize(totalSelectedSize)}",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            color = Color.White
+                        )
+                    } else {
+                        Text(
+                            text = "SHRED ${formatSize(totalSelectedSize)}",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
+                            color = Color.White
+                        )
+                    }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 TextButton(

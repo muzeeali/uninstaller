@@ -396,7 +396,7 @@ object AdManager {
     }
 
     // --- Rewarded
-    private fun loadRewarded() {
+    fun loadRewarded() {
         val ctx = appCtx ?: return
         if (!adsEnabled || !rewardedAdsEnabled) return
         if (rewardedAd != null || rewardedLoading) return
