@@ -4203,10 +4203,12 @@ fun ShredderScreen(
 
     val dupsFree by FeatureFlags.shredderDuplicatesFree.collectAsState()
     val largeFree by FeatureFlags.shredderLargeFilesFree.collectAsState()
+    val isShredRewardedAdEnabled by FeatureFlags.shredRewardedAdEnabled.collectAsState()
     val largeFileThreshold by viewModel.largeFileThreshold.collectAsState()
 
     val isDupsLocked = !isPremium && !dupsFree
     val isLargeLocked = !isPremium && !largeFree
+    val requireRewardedAd = !isPremium && isShredRewardedAdEnabled
 
     var selectedTab by remember { mutableStateOf(0) }
     var showConfirmDialog by remember { mutableStateOf(false) }
@@ -4372,7 +4374,7 @@ fun ShredderScreen(
                 Button(
                     onClick = {
                         if (totalSelectedSize > 0) {
-                            if (!isPremium) {
+                            if (requireRewardedAd) {
                                 if (AdManager.isRewardedReady()) {
                                     AdManager.showRewarded(
                                         onRewardEarned = {
@@ -4399,7 +4401,7 @@ fun ShredderScreen(
                     ),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    if (!isPremium) {
+                    if (requireRewardedAd) {
                         Icon(
                             imageVector = Icons.Default.PlayArrow,
                             contentDescription = null,
